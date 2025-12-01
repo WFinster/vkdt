@@ -300,11 +300,6 @@ jobs:
           echo "export OPT_LDLFAGS" >> bin/config.mk
       - name: compile
         run: |
-          export PATH="/usr/local/opt/make/libexec/gnubin:$PATH"
-          # fails in github ci:
-          # might be in: /opt/homebrew/Cellar/
-          # export PKG_CONFIG_PATH=$(find /usr/local/Cellar -name 'pkgconfig' -type d | grep lib/pkgconfig | tr '\n' ':' | sed s/.$//)
-          # export PKG_CONFIG_PATH=$(find /usr/homebrew/Cellar -name 'pkgconfig' -type d | grep lib/pkgconfig | tr '\n' ':' | sed s/.$//)
           make -C ${SRC_DIR} -j20
       - name: get version info
         run: |
@@ -318,22 +313,22 @@ jobs:
           mkdir ${APPDIR}/Contents/Resources
           make VKDTBIN=/tmp/dontinstall DESTDIR=${APPDIR} prefix=/Contents/MacOS install
           cp vkdt.png ${APPDIR}/Contents/Resources/vkdt.png
-          ditto /opt/homebrew/lib/libMoltenVK.dylib ${APPDIR}/Contents/Frameworks/libMoltenVK.dylib
+          ditto $(brew --prefix)/lib/libMoltenVK.dylib ${APPDIR}/Contents/Frameworks/libMoltenVK.dylib
       - name: copy library dependencies
         run: |
           cd ${SRC_DIR}
-          find ${APPDIR} -type f | xargs otool -L | grep homebrew | sort | uniq | cut -wf 2 | xargs -I {} ditto {} ${APPDIR}/Contents/Frameworks/
-          # Repeat above until satiated
+
+          previousRun=-1
+          run=0
+          while [ "$previousRun" -ne "$run" ]
+	          do previousRun=$run; find ~/vkdt.app -type f -print0 | xargs -0 otool -L | grep $(brew --prefix) | sort | uniq | cut -wf 2 | xargs -I {} ditto {} ~/vkdt.app/Contents/Frameworks/; run=$(ls ~/vkdt.app/Contents/Frameworks/ | wc -l); echo $run
+          done
           find ${APPDIR} -type f -print0 | xargs -0 file | grep Mach-O | cut -wf 1 | sed 's/.$//' | tr '\n' '\0' | xargs -0 -n1 sh -c 'otool -L $0 | tail -n +2 | grep -v "/System/" | grep -v "/usr/lib" | grep -v "@rpath" | cut -wf 2 | xargs echo $0' | tr '\n' '\0' | xargs -0 -n1 bash -c 'depender=$(echo $0 | cut -wf 1); dependent=${0//$depender /}; for i in $dependent; do install_name_tool -change $i @rpath/$(basename $i) $depender; done'
           find ${APPDIR} -type f -print0 | xargs -0 file | grep "Mach-O 64-bit dynamically linked shared library" | grep -v "Contents/Frameworks" | cut -wf 1 | sed 's/.$//' | xargs -I {} mv {} ${APPDIR}/Contents/Frameworks/
-
-          cd ${APPDIR}/Contents/Frameworks
-
-          versionedLibs=$(ls ${APPDIR}/Contents/Frameworks | tr '\n' '\0' | xargs -0 -n1 bash -c 'echo "$0" "$(otool -D $0 | grep $0 | wc -l)"' | grep " 1" | cut -wf 1)
-
       - name: something more on libs
         run: |
           cd ${APPDIR}/Contents/Frameworks
+          versionedLibs=$(ls ${APPDIR}/Contents/Frameworks | tr '\n' '\0' | xargs -0 -n1 bash -c 'echo "$0" "$(otool -D $0 | grep $0 | wc -l)"' | grep " 1" | cut -wf 1)
           for i in $(seq 1 5)
           do
             for lib in $versionedLibs
@@ -350,15 +345,16 @@ jobs:
           done
       - name: install moltenvk icd
         run: |
-          mkdir -p ${APPDIR}/Contents/Resources/vulkan/icd.d
-          echo "{
-              "file_format_version": "1.0.0",
-              "ICD": {
-                  "library_path": "../../../../../Frameworks/libMoltenVK.dylib",
-                  "api_version": "1.3.0",
-                  "is_portability_driver": true
-              }
-          }" >> ${APPDIR}/Contents/Resources/vulkan/icd.d/MoltenVK_icd.json
+          mkdir -p ~/vkdt.app/Contents/Resources/vulkan/icd.d
+          cat > ~/vkdt.app/Contents/Resources/vulkan/icd.d/MoltenVK_icd.json << EOM
+          {
+	          "file_format_version": "1.0.0",
+	          "ICD": {
+	          	"library_path": "../../../../../Frameworks/libMoltenVK.dylib",
+          		"api_version": "1.2.0",
+          		"is_portability_driver": true
+	          }
+          }
       - name: build dmg image
         run: |
           cd ${SRC_DIR}
@@ -419,7 +415,6 @@ jobs:
 
           hdiutil create -srcfolder vkdt-image -format UDSB vkdt-image.sparsebundle
           hdiutil convert vkdt-image.sparsebundle -format ULMO -o vkdt-${{ env.VERSION }}.dmg
-          # TODO: codesign --force -s - /path/to/dylib on every dylib
       - name: package upload
         if: ${{ success() }}
         uses: actions/upload-artifact@v4
