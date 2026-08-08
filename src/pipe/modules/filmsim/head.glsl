@@ -23,14 +23,15 @@ layout(std140, set = 0, binding = 1) uniform params_t
   int   process;
   int   film;
   float ev_film;
+  float f_base;
   float gamma_film;
   float g_fast;
   float g_slow;
   float exhaust;
   float hl_boost_ev;
   int   paper;
-  float p_base;
   float ev_paper;
+  float p_base;
   float gamma_paper;
   float g_fast_p;
   float g_slow_p;
@@ -59,7 +60,6 @@ layout(std140, set = 0, binding = 1) uniform params_t
   float hal_dec;
   float scat_amt;
   float pad_cp0;
-  float pad_cp1;
   vec4  halation_strength;
   int   grain;
   float grain_size;
@@ -88,9 +88,6 @@ const int n_expose_groups = 9;    // 36/4, no tail
 const vec3 scatter_tail_weight  = vec3(0.78, 0.65, 0.67);
 // Three-Gaussian exponential-tail fit.
 const vec3 scatter_exp_amp      = vec3(0.1633, 0.6496, 0.1870);
-// Film and paper base-density scales.
-const float dye_density_min_factor_film = 1.0;
-
 #include "data.glsl"
 
 const float log2_10 = 3.32192809489;        // base-10 density -> exp2 exponent

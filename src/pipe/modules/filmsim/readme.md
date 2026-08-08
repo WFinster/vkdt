@@ -181,6 +181,7 @@ block) and print paper options (second block).
 * `g slow` gamma correction for the slow (shadow) density curve sublayer
 * `exhaust` developer exhaustion, reduces effective contrast/density in areas of high overall exposure
 * `hl boost` boosts highlights above a threshold, useful in combination with halation.
+* `f base` scale on the film's base density (dmin)
 * `paper` the paper id in the datafile
 * `p base` scale on paper's base density in the print
 * `ev paper` exposure correction when sensitising the paper, affects shadows more than the film exposure
@@ -189,7 +190,7 @@ block) and print paper options (second block).
 * `g slow p` gamma correction for the paper slow density curve sublayer
 * `p exh` paper developer exhaustion, reduces effective contrast/density in areas of high overall paper exposure
 * `glare` veiling glare in the scanner/viewing optics, in percent of the illuminant
-* `filter c` when exposing the print paper, dial in this share of cyan filter. this parameter is automatically filled by neutral optimisation. set to -1 to fill filter cmy with auto white balance weights for the current film and paper. when directly scanning a positive/reversal stock (process 1), this instead filters the scan lamp so the stock's own neutral point comes out grey, always auto-filled the same way (the slider is only shown for the print-negative process; use `tune m`/`tune y` to trim it for a direct scan)
+* `filter c` cyan filtration; set to -1 for automatic neutral balance. for a direct positive scan, it filters the scan lamp.
 * `filter m` same as `filter c`, magenta share. this parameter is automatically filled by neutral optimisation
 * `filter y` same as `filter c`, yellow share. this parameter is automatically filled by neutral optimisation
 * `tune m` fine tune the magenta filter (or, for a directly scanned positive stock, the scan lamp's magenta share). think of this as a red/green tint

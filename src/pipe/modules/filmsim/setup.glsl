@@ -309,7 +309,7 @@ void setup_enlarger_illuminant(int film, int paper)
       dye_density = mix(dye_density, vec4(0.0), isnan(dye_density));
       dye_density.xyz *= log2_10;
       dye_density = clamp(dye_density, vec4(0.0), vec4(1e5));
-      base_light = exp2(-dye_density.w * dye_density_min_factor_film * log2_10);
+      base_light = exp2(-dye_density.w * params.f_base * log2_10);
     }
 
     float illuminant = colour_blackbody(lambda, enlarger_lamp_K) * kg3_transmittance[tid];
@@ -386,7 +386,7 @@ void setup_scan_illuminant()
     vec3 f_main = mix(vec3(1.0), dich, neutral_main);
     float filter_light = f_main.x * f_main.y * f_main.z;
 
-    float base_scale = (params.process != s_process_scan_neg) ? params.p_base : dye_density_min_factor_film;
+    float base_scale = (params.process != s_process_scan_neg) ? params.p_base : params.f_base;
     float base_density = dye_density.w * base_scale;
     float base_light = exp2(-base_density * log2_10);
     vec3 factor_vec = missing ? vec3(0.0) : scan_illuminant * filter_light * cmf * base_light;
