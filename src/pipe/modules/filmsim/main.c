@@ -8,19 +8,28 @@ enum filmsim_module_port_t
 {
   s_port_input = 0,
   s_port_output,
-  s_port_curvewarp,
+  s_port_filmsim,
   s_port_spectra,
 };
 
+// Fill a sampler slot the shader will not read: any bound image will do.
 static inline void
-filmsim_copy_module_port(dt_graph_t *graph, dt_module_t *module,
-    enum filmsim_module_port_t src, int dst_node, int dst_port)
+filmsim_bind_dummy(dt_graph_t *graph, dt_module_t *module, int dst_node, int dst_port)
 {
-  dt_connector_copy(graph, module, src, dst_node, dst_port);
+  dt_connector_copy(graph, module, s_port_filmsim, dst_node, dst_port);
 }
 
-// Long edge of a 35mm frame.
-#define FILMSIM_FRAME_WIDTH_UM 35000.0f
+// Index of a named connector on an already created node.
+static inline int
+filmsim_conn_id(dt_graph_t *graph, int node, const char *conn)
+{
+  const dt_token_t connt = dt_token(conn);
+  for(int c=0;c<graph->node[node].num_connectors;c++)
+    if(graph->node[node].connector[c].name == connt) return c;
+  assert(0 && "no such connector");
+  return -1;
+}
+
 // Convert negative micrometres to film pixels.
 #define FILMSIM_UM_TO_SIGMA_PX(um, iwd, iht) ((um) * MAX(iwd, iht) / FILMSIM_FRAME_WIDTH_UM)
 // dt_api_blur takes 2 sigma.
@@ -33,13 +42,8 @@ static inline int
 filmsim_blur(dt_graph_t *graph, dt_module_t *module, int src, const char *conn, float sigma_px)
 {
   if(FILMSIM_SIGMA_IS_NOOP(sigma_px)) return src;
-  int connid = -1;
-  const dt_token_t connt = dt_token(conn);
-  for(int c=0;c<graph->node[src].num_connectors;c++)
-    if(graph->node[src].connector[c].name == connt) { connid = c; break; }
-  assert(connid >= 0);
   int id_out = -1;
-  dt_api_blur(graph, module, src, connid, 0, &id_out, FILMSIM_BLUR_PYR_R(sigma_px));
+  dt_api_blur(graph, module, src, filmsim_conn_id(graph, src, conn), 0, &id_out, FILMSIM_BLUR_PYR_R(sigma_px));
   return id_out;
 }
 
@@ -52,6 +56,9 @@ static const float filmsim_scatter_exp_ratio[FILMSIM_SCATTER_N_TAIL] = { 0.5360f
 
 // Negative filter c requests auto white balance.
 #define FILMSIM_WB_AUTO (-1.0f)
+
+// Floats of prepared per-frame state handed from setup to the pixel passes.
+#define FILMSIM_PREP_BUF_SIZE 2048
 
 #define FILMSIM_NUM_FILMS  ((int)(sizeof(wb)    / sizeof(wb[0])))
 #define FILMSIM_NUM_PAPERS ((int)(sizeof(wb[0]) / sizeof(wb[0][0])))
@@ -86,46 +93,20 @@ void modify_roi_out(
   module->connector[s_port_output].roi.full_ht = MIN(32768, module->connector[s_port_input].roi.full_ht * s);
 }
 
-// write the fitted neutral for a film/paper pair onto the sliders
+// write the fitted neutral for the selected stocks onto the sliders. positives
+// are balanced at scan, negatives under the enlarger.
 static inline void
-filmsim_apply_wb(dt_module_t *module, int film, int paper)
+filmsim_apply_wb_auto(dt_module_t *module, int pid_process, int pid_f, int pid_p)
 {
-  static const dt_token_t par[4] = {
-    dt_token("ev paper"), dt_token("filter c"), dt_token("filter m"), dt_token("filter y") };
+  const int positive = dt_module_param_int(module, pid_process)[0] == FILMSIM_PROCESS_SCAN_NEG;
+  const int film  = CLAMP(dt_module_param_int(module, pid_f)[0], 0, FILMSIM_NUM_FILMS-1);
+  const int paper = CLAMP(dt_module_param_int(module, pid_p)[0], 0, FILMSIM_NUM_PAPERS-1);
+  const float *v = positive ? pos_wb[film] : wb[film][paper];
+  const dt_token_t par[4] = {
+    positive ? dt_token("ev film") : dt_token("ev paper"),
+    dt_token("filter c"), dt_token("filter m"), dt_token("filter y") };
   for(int i=0;i<4;i++)
-    ((float*)dt_module_param_float(module, dt_module_get_param(module->so, par[i])))[0]
-      = wb[film][paper][i];
-}
-
-// Apply a positive-stock neutral fit.
-static inline void
-filmsim_apply_pos_wb(dt_module_t *module, int film)
-{
-  static const dt_token_t par[4] = {
-    dt_token("ev film"), dt_token("filter c"), dt_token("filter m"), dt_token("filter y") };
-  for(int i=0;i<4;i++)
-    ((float*)dt_module_param_float(module, dt_module_get_param(module->so, par[i])))[0]
-      = pos_wb[film][i];
-}
-
-// Choose the white-balance table for this process.
-static inline void
-filmsim_apply_wb_auto(dt_module_t *module, int process, int film, int paper)
-{
-  if(process == FILMSIM_PROCESS_SCAN_NEG)
-    filmsim_apply_pos_wb(module, film);
-  else
-    filmsim_apply_wb(module, film, paper);
-}
-
-// Apply auto white balance from clamped module parameters.
-static inline void
-filmsim_apply_wb_auto_clamped(dt_module_t *module, int pid_process, int pid_f, int pid_p)
-{
-  filmsim_apply_wb_auto(module,
-      dt_module_param_int(module, pid_process)[0],
-      CLAMP(dt_module_param_int(module, pid_f)[0], 0, FILMSIM_NUM_FILMS-1),
-      CLAMP(dt_module_param_int(module, pid_p)[0], 0, FILMSIM_NUM_PAPERS-1));
+    ((float*)dt_module_param_float(module, dt_module_get_param(module->so, par[i])))[0] = v[i];
 }
 
 // Resolved graph topology and dimensions.
@@ -174,7 +155,7 @@ void commit_params(
     int pid_process = dt_module_get_param(module->so, dt_token("process"));
     int pid_f = dt_module_get_param(module->so, dt_token("film"));
     int pid_p = dt_module_get_param(module->so, dt_token("paper"));
-    filmsim_apply_wb_auto_clamped(module, pid_process, pid_f, pid_p);
+    filmsim_apply_wb_auto(module, pid_process, pid_f, pid_p);
   }
 }
 
@@ -200,7 +181,7 @@ check_params(
     {
       // Process selects the auto white-balance table.
       if(parid == (uint32_t)pid_process)
-        filmsim_apply_wb_auto_clamped(module, pid_process, pid_f, pid_p);
+        filmsim_apply_wb_auto(module, pid_process, pid_f, pid_p);
       return s_graph_run_all;
     }
     return s_graph_run_record_cmd_buf;
@@ -222,14 +203,15 @@ check_params(
   const int pid_scat = dt_module_get_param(module->so, dt_token("scat amt"));
   if(parid == (uint32_t)pid_scat)
   {
+    const int hal = dt_module_param_int(module, dt_module_get_param(module->so, dt_token("halation")))[0];
     const float o = *(float*)oldval, n = dt_module_param_float(module, pid_scat)[0];
-    if((o <= 0.0f) != (n <= 0.0f)) return s_graph_run_all;
+    if(hal && (o <= 0.0f) != (n <= 0.0f)) return s_graph_run_all;
     return s_graph_run_record_cmd_buf;
   }
   if(parid == pid_f || parid == pid_p)
   { // film or paper changed, update the pre-optimised wb coeffs
     if(*(int*)oldval != dt_module_param_int(module, parid)[0])
-      filmsim_apply_wb_auto_clamped(module, pid_process, pid_f, pid_p);
+      filmsim_apply_wb_auto(module, pid_process, pid_f, pid_p);
   }
   return s_graph_run_record_cmd_buf; // minimal parameter upload to uniforms is fine
 }
@@ -249,16 +231,14 @@ build_curvewarp_node(dt_graph_t *graph, dt_module_t *module, const filmsim_plan_
 
 // Once-per-frame prepared state.
 static int
-build_setup_node(dt_graph_t *graph, dt_module_t *module, int id_curvewarp)
+build_setup_node(dt_graph_t *graph, dt_module_t *module, int id_curvewarp, const filmsim_plan_t *plan)
 {
-#ifndef FILMSIM_PREP_BUF_SIZE
-#define FILMSIM_PREP_BUF_SIZE 2048
-#endif
   dt_roi_t roi_prep_buf   = (dt_roi_t){ .full_wd = FILMSIM_PREP_BUF_SIZE, .full_ht = 1, .wd = FILMSIM_PREP_BUF_SIZE, .ht = 1 };
-  const int id_setup = dt_node_add(graph, module, "filmsim", "setup", 1, 1, 1, 0, 0, 2,
+  const int pc[] = { plan->iwd, plan->iht, plan->owd, plan->oht };
+  const int id_setup = dt_node_add(graph, module, "filmsim", "setup", 1, 1, 1, sizeof(pc), pc, 2,
       "filmsim",   "read",  "*",    "*",    dt_no_roi,
       "prep",      "write", "ssbo", "f32",  &roi_prep_buf);
-  filmsim_copy_module_port(graph, module, s_port_curvewarp, id_setup, 0);
+  filmsim_bind_dummy(graph, module, id_setup, 0);
   if (id_curvewarp >= 0) // cwarp needs prep's density-model center offset
     CONN(dt_node_connect_named(graph, id_setup, "prep", id_curvewarp, "prep"));
   return id_setup;
@@ -275,10 +255,10 @@ build_negprint_stage(dt_graph_t *graph, dt_module_t *module, int id_setup)
       "spectra",   "read",  "*",    "*",    dt_no_roi,
       "prep",      "read",  "*",    "*",    dt_no_roi,
       "out",       "write", "rgba", "f16", &module->connector[s_port_output].roi);
-  filmsim_copy_module_port(graph, module, s_port_input, id_negprint, 0);
-  filmsim_copy_module_port(graph, module, s_port_spectra, id_negprint, 1);
+  dt_connector_copy(graph, module, s_port_input, id_negprint, 0);
+  dt_connector_copy(graph, module, s_port_spectra, id_negprint, 1);
   CONN(dt_node_connect_named(graph, id_setup, "prep", id_negprint, "prep"));
-  filmsim_copy_module_port(graph, module, s_port_output, id_negprint, 3);
+  dt_connector_copy(graph, module, s_port_output, id_negprint, 3);
 }
 
 // Fast path: expose, develop, and finalize in one dispatch.
@@ -286,33 +266,31 @@ static void
 build_fastpath_stage(dt_graph_t *graph, dt_module_t *module, int id_setup,
     const filmsim_plan_t *plan)
 {
-  const int id_dev = dt_node_add(graph, module, "filmsim", "develop", plan->owd, plan->oht, 1, 0, 0, 6,
+  const int id_dev = dt_node_add(graph, module, "filmsim", "fast", plan->owd, plan->oht, 1, 0, 0, 4,
       "input",     "read",  "*",    "*",    dt_no_roi,
       "prep",      "read",  "*",    "*",    dt_no_roi,
       "spectra",   "read",  "*",    "*",    dt_no_roi,
-      "cwarp",     "read",  "*",    "*",    dt_no_roi,
-      "coupler",   "read",  "*",    "*",    dt_no_roi,
       "output",    "write", "rgba", "f16", &module->connector[s_port_output].roi);
-  filmsim_copy_module_port(graph, module, s_port_input, id_dev, 0);
+  dt_connector_copy(graph, module, s_port_input, id_dev, 0);
   CONN(dt_node_connect_named(graph, id_setup, "prep", id_dev, "prep"));
-  filmsim_copy_module_port(graph, module, s_port_spectra, id_dev, 2);
-  filmsim_copy_module_port(graph, module, s_port_curvewarp, id_dev, 3);
-  filmsim_copy_module_port(graph, module, s_port_curvewarp, id_dev, 4);
-  filmsim_copy_module_port(graph, module, s_port_output, id_dev, 5);
+  dt_connector_copy(graph, module, s_port_spectra, id_dev, 2);
+  dt_connector_copy(graph, module, s_port_output, id_dev, 3);
 }
 
 static int
 build_expose_stage(dt_graph_t *graph, dt_module_t *module, int id_setup,
     const filmsim_plan_t *plan)
 {
+  dt_roi_t roi_cp_stub = (dt_roi_t){ .full_wd = 1, .full_ht = 1, .wd = 1, .ht = 1 };
+  dt_roi_t *roi_cp = plan->couplers > 0 ? &module->connector[s_port_input].roi : &roi_cp_stub;
   const int id_expose = dt_node_add(graph, module, "filmsim", "expose", plan->iwd, plan->iht, 1, 0, 0, 5,
       "input",     "read",  "*",    "*",    dt_no_roi,
       "spectra",   "read",  "*",    "*",    dt_no_roi,
       "prep",      "read",  "*",    "*",    dt_no_roi,
-      "coupler",   "write", "rgba", "f16", &module->connector[s_port_input].roi,
+      "coupler",   "write", "rgba", "f16", roi_cp,
       "exp",       "write", "rgba", "f16", &module->connector[s_port_input].roi);
-  filmsim_copy_module_port(graph, module, s_port_input, id_expose, 0);
-  filmsim_copy_module_port(graph, module, s_port_spectra, id_expose, 1);
+  dt_connector_copy(graph, module, s_port_input, id_expose, 0);
+  dt_connector_copy(graph, module, s_port_spectra, id_expose, 1);
   CONN(dt_node_connect_named(graph, id_setup, "prep", id_expose, "prep"));
   return id_expose;
 }
@@ -322,31 +300,26 @@ static int
 build_postexpose_stage(dt_graph_t *graph, dt_module_t *module, int id_curvewarp, int id_setup,
     int id_expose, const filmsim_plan_t *plan)
 {
-  // halin has no spectral sampler.
   int id_dev1;
   if(plan->halation)
-    id_dev1 = dt_node_add(graph, module, "filmsim", "halin", plan->iwd, plan->iht, 1, 0, 0, 5,
+    id_dev1 = dt_node_add(graph, module, "filmsim", "halin", plan->iwd, plan->iht, 1, 0, 0, 4,
         "exp",       "read",  "*",    "*",    dt_no_roi,
         "prep",      "read",  "*",    "*",    dt_no_roi,
-        "cwarp",     "read",  "*",    "*",    dt_no_roi,
         "coupler",   "read",  "*",    "*",    dt_no_roi,
         "output",    "write", "rgba", "f16", &module->connector[s_port_input].roi);
   else
   {
-    id_dev1 = dt_node_add(graph, module, "filmsim", "develop", plan->owd, plan->oht, 1, 0, 0, 6,
+    assert(id_curvewarp >= 0);
+    id_dev1 = dt_node_add(graph, module, "filmsim", "develop", plan->owd, plan->oht, 1, 0, 0, 5,
         "exp",       "read",  "*",    "*",    dt_no_roi,
         "prep",      "read",  "*",    "*",    dt_no_roi,
-        "spectra",   "read",  "*",    "*",    dt_no_roi,
         "cwarp",     "read",  "*",    "*",    dt_no_roi,
         "coupler",   "read",  "*",    "*",    dt_no_roi,
         "output",    "write", "rgba", "f16", &module->connector[s_port_output].roi);
-    filmsim_copy_module_port(graph, module, s_port_spectra, id_dev1, 2);
   }
   CONN(dt_node_connect_named(graph, id_setup, "prep", id_dev1, "prep"));
-  if (id_curvewarp >= 0)
+  if(!plan->halation)
     CONN(dt_node_connect_named(graph, id_curvewarp, "output", id_dev1, "cwarp"));
-  else
-    filmsim_copy_module_port(graph, module, s_port_curvewarp, id_dev1, plan->halation ? 2 : 3);
 
   const int id_cp = plan->couplers > 0 ?
     filmsim_blur(graph, module, id_expose, "coupler", plan->cp_sigma) : id_expose;
@@ -409,7 +382,7 @@ build_halation_stage(dt_graph_t *graph, dt_module_t *module, int id_curvewarp, i
   if (id_curvewarp >= 0)
     CONN(dt_node_connect_named(graph, id_curvewarp, "output", id_dev2, "cwarp"));
   else
-    filmsim_copy_module_port(graph, module, s_port_curvewarp, id_dev2, 2);
+    filmsim_bind_dummy(graph, module, id_dev2, 2);
 
   const int id_hal_src = build_scatter_stage(graph, module, id_dev1, plan);
 
@@ -435,7 +408,7 @@ create_nodes(
   const filmsim_plan_t plan = filmsim_make_plan(module);
 
   const int id_curvewarp = build_curvewarp_node(graph, module, &plan);
-  const int id_setup = build_setup_node(graph, module, id_curvewarp);
+  const int id_setup = build_setup_node(graph, module, id_curvewarp, &plan);
 
   if(plan.process == FILMSIM_PROCESS_PRINT_NEG)
   {
@@ -457,9 +430,5 @@ create_nodes(
     id_dev1;
 
   CONN(dt_node_connect_named(graph, id_expose, "exp", id_dev1, "exp"));
-  int outc = -1;
-  const dt_token_t outt = dt_token("output");
-  for(int c=0;c<graph->node[id_dev2].num_connectors;c++)
-    if(graph->node[id_dev2].connector[c].name == outt) { outc = c; break; }
-  filmsim_copy_module_port(graph, module, s_port_output, id_dev2, outc);
+  dt_connector_copy(graph, module, s_port_output, id_dev2, filmsim_conn_id(graph, id_dev2, "output"));
 }

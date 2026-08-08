@@ -26,7 +26,6 @@ shared vec3 shared_halation_strength;
 shared vec4 shared_expose_factor_r[11];
 shared vec4 shared_expose_factor_g[11];
 shared vec4 shared_expose_factor_b[11];
-shared vec4 shared_expose_ae_bb;
 shared float shared_expose_autoexp_norm;
 shared vec4 shared_reduce_acc[32];
 
@@ -39,7 +38,7 @@ shared vec3 shared_langmuir_num_dmax;
 shared vec4 shared_scan_dye_r[11], shared_scan_dye_g[11], shared_scan_dye_b[11];
 shared vec4 shared_scan_factor_r[11], shared_scan_factor_g[11], shared_scan_factor_b[11];
 shared vec3 shared_scan_wp;
-shared float shared_scan_autoexp, shared_scan_autoexp_norm;
+shared float shared_scan_autoexp_norm;
 shared vec2 shared_m_scan;
 shared float shared_glare_mean;
 shared uint shared_glare_seed;
@@ -47,12 +46,7 @@ shared uint shared_glare_seed;
 shared vec4 shared_enlarger_dye_r[11], shared_enlarger_dye_g[11], shared_enlarger_dye_b[11];
 shared vec4 shared_enlarger_factor_r[11], shared_enlarger_factor_g[11], shared_enlarger_factor_b[11];
 shared vec3 shared_preflash;
-shared float shared_enlarger_autoexp, shared_enlarger_autoexp_norm;
-
-float gumbel_cdf(float z)
-{
-  return exp2(-exp2(-(model_gumbel_scale * z + model_gumbel_loc)));
-}
+shared float shared_enlarger_autoexp_norm;
 
 float eval_channel_density_at_y0(int slot, int ch, float o, float mix_ex)
 {
@@ -63,9 +57,7 @@ float eval_channel_density_at_y0(int slot, int ch, float o, float mix_ex)
   {
     float g = shared_model_gamma[slot][l];
     float z = clamp(sgn * (-(shared_model_centers[slot][l][ch] + g * o)) * shared_model_inv_sigmas[slot][l][ch], -10.0, 10.0);
-    float cdf = norm_cdf(z);
-    if(mix_ex > 0.0) cdf = mix(cdf, gumbel_cdf(z), mix_ex);
-    d += shared_model_amps[slot][l][ch] * cdf;
+    d += shared_model_amps[slot][l][ch] * density_cdf(z, mix_ex);
   }
   return d;
 }
@@ -211,14 +203,33 @@ float eval_illuminant_spd(float cct, float lambda, int tid, vec2 m)
   return cie_d_s0[tid] + m.x * cie_d_s1[tid] + m.y * cie_d_s2[tid];
 }
 
+vec3 fetch_sensitivity(int stock, int tid)
+{
+  vec3 log_sensitivity = texelFetch(img_filmsim, ivec2(tid * 2, stock * 3 + s_sensitivity), 0).rgb;
+  return mix(exp2(log_sensitivity * log2_10), vec3(0.0), isnan(log_sensitivity));
+}
+
+vec4 fetch_dye_density(int stock, int tid, out bool missing)
+{
+  vec4 dye_density = texelFetch(img_filmsim, ivec2(tid * 2, stock * 3 + s_dye_density), 0);
+  missing = any(isnan(dye_density.xyz));
+  dye_density = mix(dye_density, vec4(0.0), isnan(dye_density));
+  dye_density.xyz *= log2_10;
+  return dye_density;
+}
+
+float dichroic_transmittance(float lambda, vec3 neutral)
+{
+  vec3 f = mix(vec3(1.0), dichroic_filters(lambda), neutral);
+  return f.x * f.y * f.z;
+}
+
 void setup_expose_film(int film)
 {
   int tid = int(gl_LocalInvocationIndex);
   if (tid < 11)
   {
-    shared_expose_factor_r[tid] = vec4(0.0);
-    shared_expose_factor_g[tid] = vec4(0.0);
-    shared_expose_factor_b[tid] = vec4(0.0);
+    FILMSIM_ZERO_BANDS(shared_expose_factor, tid);
   }
   vec4 ref_tx = texelFetch(img_filmsim, ivec2(22, film * 3 + s_density_model), 0);
   float ref_cct = ref_tx.w;
@@ -233,9 +244,7 @@ void setup_expose_film(int film)
   if (tid < n_expose_bands)
   {
     float lambda = 380.0 + tid * 10.0;
-    vec3 log_sensitivity = texelFetch(img_filmsim, ivec2(tid * 2, film * 3 + s_sensitivity), 0).rgb;
-    vec3 sensitivity = mix(exp2(log_sensitivity * log2_10), vec3(0.0), isnan(log_sensitivity));
-    vec3 env_sens = sensitivity * envelope(lambda);
+    vec3 env_sens = fetch_sensitivity(film, tid) * envelope(lambda);
     vec3 factor = env_sens;
     // Correct the capture to D65.
     if (params.scene_ill != 0.0)
@@ -251,9 +260,7 @@ void setup_expose_film(int film)
       factor *= target_illuminant;
     }
     factor /= expose_norm;
-    shared_expose_factor_r[tid/4][tid%4] = factor.r;
-    shared_expose_factor_g[tid/4][tid%4] = factor.g;
-    shared_expose_factor_b[tid/4][tid%4] = factor.b;
+    FILMSIM_PACK_BANDS(shared_expose_factor, tid, factor);
     ae_val = dot(factor, rec2020_luma);
   }
 
@@ -280,12 +287,8 @@ void setup_enlarger_illuminant(int film, int paper)
   int tid = int(gl_LocalInvocationIndex);
   if (tid < 11)
   {
-    shared_enlarger_dye_r[tid] = vec4(0.0);
-    shared_enlarger_dye_g[tid] = vec4(0.0);
-    shared_enlarger_dye_b[tid] = vec4(0.0);
-    shared_enlarger_factor_r[tid] = vec4(0.0);
-    shared_enlarger_factor_g[tid] = vec4(0.0);
-    shared_enlarger_factor_b[tid] = vec4(0.0);
+    FILMSIM_ZERO_BANDS(shared_enlarger_dye, tid);
+    FILMSIM_ZERO_BANDS(shared_enlarger_factor, tid);
   }
   barrier();
   vec3 pf_val = vec3(0.0);
@@ -296,50 +299,36 @@ void setup_enlarger_illuminant(int film, int paper)
   if (tid < n_spectral_bands)
   {
     float lambda = 380.0 + tid * 10.0;
-    vec3 log_sensitivity = texelFetch(img_filmsim, ivec2(tid * 2, paper * 3 + s_sensitivity), 0).rgb;
-    vec3 sensitivity = mix(exp2(log_sensitivity * log2_10), vec3(0.0), isnan(log_sensitivity));
+    vec3 sensitivity = fetch_sensitivity(paper, tid);
 
     vec4 dye_density = vec4(0.0);
     bool missing = false;
     float base_light = 1.0;
     if(film >= 0)
     {
-      dye_density = texelFetch(img_filmsim, ivec2(tid * 2, film * 3 + s_dye_density), 0);
-      missing = any(isnan(dye_density.xyz));
-      dye_density = mix(dye_density, vec4(0.0), isnan(dye_density));
-      dye_density.xyz *= log2_10;
-      dye_density = clamp(dye_density, vec4(0.0), vec4(1e5));
+      dye_density = clamp(fetch_dye_density(film, tid, missing), vec4(0.0), vec4(1e5));
       base_light = exp2(-dye_density.w * params.f_base * log2_10);
     }
 
     float illuminant = colour_blackbody(lambda, enlarger_lamp_K) * kg3_transmittance[tid];
     float common_light = illuminant * base_light * exp2(params.ev_paper);
 
-    vec3 dich = dichroic_filters(lambda);
-    vec3 f_main = mix(vec3(1.0), dich, neutral_main);
-    float light_main = f_main.x * f_main.y * f_main.z * common_light;
+    float light_main = dichroic_transmittance(lambda, neutral_main) * common_light;
     vec3 factor = missing ? vec3(0.0) : sensitivity * light_main;
 
-    vec3 f_pf = mix(vec3(1.0), dich, neutral_pf);
-    float light_pf = f_pf.x * f_pf.y * f_pf.z * common_light * exp2(params.pf_ev);
+    float light_pf = dichroic_transmittance(lambda, neutral_pf) * common_light * exp2(params.pf_ev);
     pf_val = (missing || params.preflash <= 0) ? vec3(0.0) : sensitivity * light_pf;
 
     ae_val = dot(factor, rec2020_luma) * exp2(-params.ev_paper);
 
-    shared_enlarger_dye_r[tid/4][tid%4] = dye_density.x;
-    shared_enlarger_dye_g[tid/4][tid%4] = dye_density.y;
-    shared_enlarger_dye_b[tid/4][tid%4] = dye_density.z;
-    shared_enlarger_factor_r[tid/4][tid%4] = factor.r;
-    shared_enlarger_factor_g[tid/4][tid%4] = factor.g;
-    shared_enlarger_factor_b[tid/4][tid%4] = factor.b;
+    FILMSIM_PACK_BANDS(shared_enlarger_dye, tid, dye_density.xyz);
+    FILMSIM_PACK_BANDS(shared_enlarger_factor, tid, factor);
   }
 
   SUBGROUP_REDUCE(vec3, xyz, vec3(0.0), pf_val, shared_preflash);
-  SUBGROUP_REDUCE(float, x, 0.0, ae_val, shared_enlarger_autoexp);
+  SUBGROUP_REDUCE(float, x, 0.0, ae_val, shared_enlarger_autoexp_norm);
   if (tid == 0)
-  {
-    shared_enlarger_autoexp_norm = max(1e-6, 0.18 * shared_enlarger_autoexp);
-  }
+    shared_enlarger_autoexp_norm = max(1e-6, 0.18 * shared_enlarger_autoexp_norm);
   barrier();
 }
 
@@ -348,12 +337,8 @@ void setup_scan_illuminant()
   int tid = int(gl_LocalInvocationIndex);
   if (tid < 11)
   {
-    shared_scan_dye_r[tid] = vec4(0.0);
-    shared_scan_dye_g[tid] = vec4(0.0);
-    shared_scan_dye_b[tid] = vec4(0.0);
-    shared_scan_factor_r[tid] = vec4(0.0);
-    shared_scan_factor_g[tid] = vec4(0.0);
-    shared_scan_factor_b[tid] = vec4(0.0);
+    FILMSIM_ZERO_BANDS(shared_scan_dye, tid);
+    FILMSIM_ZERO_BANDS(shared_scan_factor, tid);
   }
   if (tid == 0)
   {
@@ -369,10 +354,8 @@ void setup_scan_illuminant()
     const int film  = params.film;
     int dye_stock = (params.process != s_process_scan_neg) ? paper : film;
 
-    vec4 dye_density = texelFetch(img_filmsim, ivec2(tid * 2, dye_stock * 3 + s_dye_density), 0);
-    bool missing = any(isnan(dye_density.xyz));
-    dye_density = mix(dye_density, vec4(0.0), isnan(dye_density));
-    dye_density.xyz *= log2_10;
+    bool missing;
+    vec4 dye_density = fetch_dye_density(dye_stock, tid, missing);
     dye_density.xyz = min(dye_density.xyz, 300.0);
 
     float scan_illuminant = eval_illuminant_spd(params.scan_ill, lambda, tid, shared_m_scan);
@@ -382,41 +365,83 @@ void setup_scan_illuminant()
     if(params.process == s_process_scan_neg)
       is_positive_stock = (shared_model_positive[s_model_film] != 0);
     vec3 neutral_main = is_positive_stock ? filter_neutral(vec2(0.0)) : vec3(0.0);
-    vec3 dich = dichroic_filters(lambda);
-    vec3 f_main = mix(vec3(1.0), dich, neutral_main);
-    float filter_light = f_main.x * f_main.y * f_main.z;
+    float filter_light = dichroic_transmittance(lambda, neutral_main);
 
     float base_scale = (params.process != s_process_scan_neg) ? params.p_base : params.f_base;
     float base_density = dye_density.w * base_scale;
     float base_light = exp2(-base_density * log2_10);
     vec3 factor_vec = missing ? vec3(0.0) : scan_illuminant * filter_light * cmf * base_light;
 
-    shared_scan_dye_r[tid/4][tid%4] = dye_density.x;
-    shared_scan_dye_g[tid/4][tid%4] = dye_density.y;
-    shared_scan_dye_b[tid/4][tid%4] = dye_density.z;
-    shared_scan_factor_r[tid/4][tid%4] = factor_vec.r;
-    shared_scan_factor_g[tid/4][tid%4] = factor_vec.g;
-    shared_scan_factor_b[tid/4][tid%4] = factor_vec.b;
+    FILMSIM_PACK_BANDS(shared_scan_dye, tid, dye_density.xyz);
+    FILMSIM_PACK_BANDS(shared_scan_factor, tid, factor_vec);
 
     ae_val = (params.process != s_process_scan_neg) ? (scan_illuminant * cmf.y) : factor_vec.g;
     if(missing) ae_val = 0.0;
     wp_val = missing ? vec3(0.0) : scan_illuminant * cmf;
   }
 
-  SUBGROUP_REDUCE(float, x, 0.0, ae_val, shared_scan_autoexp);
+  SUBGROUP_REDUCE(float, x, 0.0, ae_val, shared_scan_autoexp_norm);
   SUBGROUP_REDUCE(vec3, xyz, vec3(0.0), wp_val, shared_scan_wp);
 
   if (tid == 0)
   {
+    shared_scan_autoexp_norm = max(shared_scan_autoexp_norm, 1e-5);
     shared_scan_wp /= max(shared_scan_wp.y, 1e-6);
     prep.scan.scan_adapt = chromatic_adapt(matrix_cat16_M, matrix_cat16_Mi, shared_scan_wp, d65_xyz);
     shared_glare_mean = (params.process == s_process_scan_neg) ? 0.0 : params.glare * 0.01;
     shared_glare_seed = (uint(global.hash) * 61u + uint(global.frame)) ^ 0xa511e9b3u;
   }
-  else if (tid == 1)
-  {
-    float norm = max(shared_scan_autoexp, 1e-5);
-    shared_scan_autoexp_norm = norm;
-  }
   barrier();
+}
+
+void setup_grain(ivec2 input_size, ivec2 output_size)
+{
+  if (int(gl_LocalInvocationIndex) != 0) return;
+  float scale = float(input_size.x) / float(output_size.x);
+  float lattice_um = FILMSIM_FRAME_WIDTH_UM / float(max(input_size.x, input_size.y));
+  vec3 density_max = max(shared_model_dmax, vec3(0.1)), dmin = shared_grain_dmin;
+  vec3 amp0 = shared_model_amps[s_model_film][0].rgb, amp1 = shared_model_amps[s_model_film][1].rgb;
+  vec3 amp2 = max(density_max - amp0 - amp1, 0.0);
+  vec3 inv_dmax = 1.0 / density_max, density_max_abs = density_max + dmin;
+  vec3 amp0_abs = amp0 + dmin * amp0 * inv_dmax, amp1_abs = amp1 + dmin * amp1 * inv_dmax, amp2_abs = amp2 + dmin * amp2 * inv_dmax;
+  vec3 inv_density_range = 1.0 / density_max_abs;
+  vec3 layer_fraction_0 = amp0_abs * inv_density_range;
+  vec3 layer_fraction_01 = layer_fraction_0 + amp1_abs * inv_density_range;
+  prep.grain.inv_density_range = inv_density_range;
+  prep.grain.layer_fraction_0 = layer_fraction_0;
+  prep.grain.layer_fraction_01 = layer_fraction_01;
+  prep.grain.inv_layer_fraction_0 = 1.0 / max(layer_fraction_0, vec3(1e-3));
+  prep.grain.inv_layer_fraction_1 = 1.0 / max(layer_fraction_01 - layer_fraction_0, vec3(1e-3));
+  prep.grain.inv_layer_fraction_2 = 1.0 / max(1.0 - layer_fraction_01, vec3(1e-3));
+  prep.grain.lattice_seed = hash3(ivec2(global.hash, global.frame + hash_from_size()), 0x9e3779b9u).xy * 64.0;
+  float lattice_um_sq = max(lattice_um * lattice_um, 1e-6), inv_pixel_area_um2 = 1.0 / lattice_um_sq;
+  vec3 particle_frac_fast = min(shared_grain_area_fast * inv_pixel_area_um2, vec3(1.0));
+  vec3 particle_frac_mid  = min(shared_grain_area_mid  * inv_pixel_area_um2, vec3(1.0));
+  vec3 particle_frac_slow = min(shared_grain_area_slow * inv_pixel_area_um2, vec3(1.0));
+  prep.grain.variance_weight_fast = 3.0 * density_max_abs * particle_frac_fast * amp0_abs;
+  prep.grain.variance_weight_mid  = 3.0 * density_max_abs * particle_frac_mid  * amp1_abs;
+  prep.grain.variance_weight_slow = 3.0 * density_max_abs * particle_frac_slow * amp2_abs;
+  const float blur_dye_clouds_um_sq = 4.0, global_blur_px = 0.89, min_effective_sigma_sq = 0.16;
+  float sigma_sq_base_lattice = blur_dye_clouds_um_sq / lattice_um_sq + global_blur_px * global_blur_px;
+  float coord_scale = max(1e-3, params.grain_size), inv_coord_scale = 1.0 / coord_scale;
+  float eff_sigma_sq = max(sigma_sq_base_lattice * params.grain_size * params.grain_size * inv_coord_scale * inv_coord_scale, min_effective_sigma_sq);
+  prep.grain.uniformity = clamp(shared_grain_uniformity * pow(max(0.0, params.grain_uniformity), 0.333333), 0.0, 1.0);
+  prep.grain.noise_kernel_scale = (0.5 / eff_sigma_sq) * 1.44269504;
+  prep.grain.lattice_scale = scale * inv_coord_scale;
+  prep.grain.particles_per_cell = int(clamp(round(2.0 * sigma_sq_base_lattice / eff_sigma_sq), 2.0, 12.0));
+  prep.grain.random_stream = uint(global.hash) * 1664525u;
+}
+
+void setup_halation()
+{
+  if (int(gl_LocalInvocationIndex) != 0) return;
+  int n_bounces = clamp(params.hal_bnc, 1, hal_max_bounces);
+  float rho = clamp(params.hal_dec, 0.0, 1.0), weight_sum = 0.0, w = 1.0;
+  for (int k = 0; k < n_bounces; k++) { weight_sum += w; w *= rho; }
+  prep.halation.n_bounces = n_bounces;
+  prep.halation.rho = rho;
+  prep.halation.inv_weight_sum = 1.0 / max(weight_sum, 1e-6);
+  vec3 hs_base = shared_halation_strength * params.halation_amount * params.halation_strength.rgb;
+  prep.halation.hs_base = hs_base;
+  prep.halation.inv_strength_sum = 1.0 / max(hs_base.r + hs_base.g + hs_base.b, 1e-6);
 }

@@ -4,6 +4,7 @@
 #extension GL_EXT_control_flow_attributes : enable
 #include "shared.glsl"
 #include "colourspaces.glsl"
+#include "shared/upsample.glsl"
 #include "../rt/colour.glsl"
 #include "constants.h"
 // Nodes may override this workgroup shape.

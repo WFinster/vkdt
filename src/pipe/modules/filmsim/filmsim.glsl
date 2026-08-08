@@ -42,22 +42,26 @@ const vec4 lambda_arr[11] = vec4[](
     [[unroll]] \
     for(int i = 0; i < min(N, 10); i++) \
     { \
-      vec4 lambda = lambda_arr[i]; \
-      vec4 x = ((COEFF).x * lambda + (COEFF).y) * lambda + (COEFF).z; \
-      vec4 y = inversesqrt(x * x + vec4(1.0)); \
-      vec4 val = (0.5 * x * y + vec4(0.5)) * (COEFF).w; \
+      vec4 val = sigmoid_eval(COEFF, lambda_arr[i]); \
       RAW.r += dot(val, FAC_R[i]); \
       RAW.g += dot(val, FAC_G[i]); \
       RAW.b += dot(val, FAC_B[i]); \
     } \
     if ((N) > 10) \
     { \
-      float lambda = lambda_arr[10].x; \
-      float x = ((COEFF).x * lambda + (COEFF).y) * lambda + (COEFF).z; \
-      float y = inversesqrt(x * x + 1.0); \
-      float val = (0.5 * x * y + 0.5) * (COEFF).w; \
+      float val = sigmoid_eval(COEFF, lambda_arr[10].x); \
       RAW += vec3(val) * vec3(FAC_R[10].x, FAC_G[10].x, FAC_B[10].x); \
     } \
+  } while(false)
+
+// Zero, and scatter into, one spectral set packed four bands per vec4.
+#define FILMSIM_ZERO_BANDS(PFX, TID) \
+  do { PFX##_r[TID] = vec4(0.0); PFX##_g[TID] = vec4(0.0); PFX##_b[TID] = vec4(0.0); } while(false)
+#define FILMSIM_PACK_BANDS(PFX, TID, V) \
+  do { \
+    PFX##_r[(TID)/4][(TID)%4] = (V).r; \
+    PFX##_g[(TID)/4][(TID)%4] = (V).g; \
+    PFX##_b[(TID)/4][(TID)%4] = (V).b; \
   } while(false)
 
 // Select the reduction type and shared accumulator lanes.
@@ -111,9 +115,24 @@ vec3 norm_cdf(vec3 z)
   return 1.0 / (1.0 + exp2(-z * (vec3(0.10294312) * z * z + vec3(2.30220556))));
 }
 
+float gumbel_cdf(float z)
+{
+  return exp2(-exp2(-(model_gumbel_scale * z + model_gumbel_loc)));
+}
+
 vec3 gumbel_cdf(vec3 z)
 {
   return exp2(-exp2(-(z * vec3(model_gumbel_scale) + vec3(model_gumbel_loc))));
+}
+
+float density_cdf(float z, float mix_ex)
+{
+  return mix_ex <= 0.0 ? norm_cdf(z) : mix(norm_cdf(z), gumbel_cdf(z), mix_ex);
+}
+
+vec3 density_cdf(vec3 z, float mix_ex)
+{
+  return mix_ex <= 0.0 ? norm_cdf(z) : mix(norm_cdf(z), gumbel_cdf(z), mix_ex);
 }
 
 vec3 dichroic_filters(float w)
@@ -134,6 +153,12 @@ uvec3 pcg3d(uvec3 v)
   return v;
 }
 
+uint hash_from_size()
+{ // avoid "shower door" effect when grain slides over the image:
+  uint i = uint(1337*params.grain_size);
+  return pcg3d(uvec3(i, 300*i, 7000000*i)).x;
+}
+
 vec3 hash3(ivec2 p, uint stream)
 {
   return vec3(pcg3d(uvec3(uvec2(p), stream))) * (1.0/4294967296.0);
@@ -147,4 +172,3 @@ mat3 chromatic_adapt(mat3 cat_m, mat3 cat_minv, vec3 src_xyz, vec3 dst_xyz)
   vec3 scale = (cat_m * dst_xyz) / max(cat_m * src_xyz, vec3(1e-6));
   return mat3(cat_minv[0]*scale.x, cat_minv[1]*scale.y, cat_minv[2]*scale.z) * cat_m;
 }
-

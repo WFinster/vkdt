@@ -8,7 +8,6 @@ layout(set = 1, binding = 2, std430) readonly buffer buf_prep_t { filmsim_state_
 layout(set = 1, binding = 3) uniform writeonly restrict image2D img_out;
 #include "state_ops.glsl"
 #include "sampling.glsl"
-#include "shared/upsample.glsl"
 #include "print.glsl"
 #include "scan.glsl"
 

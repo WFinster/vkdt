@@ -7,8 +7,7 @@ vec3 eval_density(vec3 y, vec3 scale[3], vec3 bias[3], vec3 amps[3], float mix_e
   [[unroll]] for(int l = 0; l < 3; l++)
   {
     vec3 z = clamp(y * scale[l] + bias[l], vec3(-10.0), vec3(10.0));
-    vec3 cdf = mix_ex <= 0.0 ? norm_cdf(z) : mix(norm_cdf(z), gumbel_cdf(z), mix_ex);
-    density_cmy += amps[l] * cdf;
+    density_cmy += amps[l] * density_cdf(z, mix_ex);
   }
   return density_cmy;
 }

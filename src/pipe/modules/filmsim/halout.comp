@@ -16,14 +16,10 @@ layout(set = 1, binding = 9) uniform sampler2D img_hal5;
 #include "sampling.glsl"
 #include "develop.glsl"
 #include "halation.glsl"
-#include "shared/upsample.glsl"
 #include "print.glsl"
 #include "scan.glsl"
 void main()
 {
-  init_grain_workgroup();
-  init_halation_workgroup();
-
   FILMSIM_BOUNDS_INIT(ipos);
   vec3 log_raw = combine_halation(ipos, img_in, img_hal0, img_hal1, img_hal2, img_hal3, img_hal4, img_hal5);
 

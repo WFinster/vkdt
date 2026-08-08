@@ -1,5 +1,4 @@
 // exposure.glsl: spectral scene exposure onto film.
-#include "shared/upsample.glsl"
 
 vec3 apply_highlight_boost(vec3 raw_norm)
 {
