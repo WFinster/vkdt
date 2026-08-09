@@ -1268,10 +1268,13 @@ darkroom_process()
       // fprintf(stderr, "rendering dbuf %d frame %d\n", vkdt.graph_dev.double_buffer, vkdt.graph_dev.frame);
       // XXX FIXME: this invalidation is required to keep validation layers happy!
       // if we invalidate things, nuklear doesn't render an image, the nk hashes change, sliders lose focus
-      // and all ui logic goes to hell (jumps like mad). ignoring that we'll read garbage for half a frame or so
-      // results in the much smoother user interface operation:
-      if(vkdt.graph_dev.runflags & s_graph_run_alloc) // strictly speaking, allocation also invalidates the other dbuf
-        vkdt.graph_res[1-vkdt.graph_dev.double_buffer] = VK_INCOMPLETE;
+      // and all ui logic goes to hell (jumps like mad). ignoring that we'll read garbage for half a frame or so.
+      // this results in much smoother user interface operation, and for non-lod renders, we'll be
+      // displaying almost the same frame. for lod, unfortunately, that's not the case. for now we'll flicker
+      // with bg colour in the case of interaction lod:
+      if(vkdt.wstate.lod_interact > vkdt.wstate.lod)
+        if(vkdt.graph_dev.runflags & s_graph_run_alloc) // strictly speaking, allocation also invalidates the other dbuf
+          vkdt.graph_res[1-vkdt.graph_dev.double_buffer] = VK_INCOMPLETE;
       vkdt.graph_res[vkdt.graph_dev.double_buffer] =
         dt_graph_run(&vkdt.graph_dev, (vkdt.graph_dev.runflags & ~s_graph_run_wait_done));
       clear_runflags();
