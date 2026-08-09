@@ -182,7 +182,7 @@ void main()
     vec3 y = vec3(0.0);
     [[unroll]] for(int ch = 0; ch < 3; ch++)
     {
-      int n = s_fold_count[ch]; // bounded by cwarp_max_folds already, see grid_warp_eff
+      int n = s_fold_count[ch]; // bounded by dirlut_max_folds already, see grid_warp_eff
       bool blended = false;
       float yv = 0.0;
       // Merged fold ranges do not overlap.

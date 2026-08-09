@@ -3,6 +3,10 @@
 // Once-per-frame prepared-state pass.
 #include "head.glsl"
 #include "state.glsl"
+layout(push_constant, std140) uniform push_t
+{
+  int iwd, iht, owd, oht;
+} push;
 layout(set = 1, binding = 0) uniform sampler2D img_filmsim;
 layout(set = 1, binding = 1, std430) buffer buf_prep_t { filmsim_state_t prep; };
 #include "setup.glsl"
@@ -71,9 +75,7 @@ void main()
       prep.film.model_dmax = shared_model_dmax;
       prep.film.M = shared_M; prep.film.c_ref = shared_c_ref; prep.film.Kr = shared_Kr;
       prep.film.langmuir_k_dmax = shared_langmuir_k_dmax; prep.film.langmuir_num_dmax = shared_langmuir_num_dmax;
-      prep.grain.grain_area_fast = shared_grain_area_fast; prep.grain.grain_area_mid = shared_grain_area_mid; prep.grain.grain_area_slow = shared_grain_area_slow;
-      prep.grain.grain_uniformity = shared_grain_uniformity; prep.grain.grain_dmin = shared_grain_dmin;
-      prep.halation.halation_strength = shared_halation_strength;
+      prep.grain.grain_dmin = shared_grain_dmin;
     }
 
     prep.scan.scan_wp = shared_scan_wp; prep.scan.scan_autoexp_norm = shared_scan_autoexp_norm;
@@ -90,5 +92,11 @@ void main()
       prep.paper.preflash = shared_preflash;
       prep.paper.enlarger_autoexp_norm = shared_enlarger_autoexp_norm;
     }
+  }
+
+  if(need_film)
+  {
+    if(params.grain > 0) setup_grain(ivec2(push.iwd, push.iht), ivec2(push.owd, push.oht));
+    if(params.halation > 0) setup_halation();
   }
 }

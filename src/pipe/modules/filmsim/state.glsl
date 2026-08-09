@@ -24,14 +24,21 @@ struct filmsim_paper_state_t
 
 struct filmsim_grain_state_t
 {
-  vec3  grain_area_fast, grain_area_mid, grain_area_slow;
-  vec3  grain_uniformity;
   vec3  grain_dmin;
+  vec3  inv_density_range, layer_fraction_0, layer_fraction_01;
+  vec3  inv_layer_fraction_0, inv_layer_fraction_1, inv_layer_fraction_2;
+  vec3  variance_weight_fast, variance_weight_mid, variance_weight_slow, uniformity;
+  vec2  lattice_seed;
+  float noise_kernel_scale, lattice_scale;
+  int   particles_per_cell;
+  uint  random_stream;
 };
 
 struct filmsim_halation_state_t
 {
-  vec3 halation_strength;
+  vec3  hs_base;
+  float rho, inv_weight_sum, inv_strength_sum;
+  int   n_bounces;
 };
 
 struct filmsim_scan_state_t

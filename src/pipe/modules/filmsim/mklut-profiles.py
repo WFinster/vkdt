@@ -322,6 +322,17 @@ print_papers = [
     'kodak_2302',  # bw cine dupe/print stock, monochrome analogue of 2383/2393
 ]
 
+def _write_rows(fh, rows, tail):
+  """Emit rows as rgba f32, NaN for missing channels, zero-padded to 256."""
+  def _f(v):
+    return float('NaN') if v is None else v
+  n = np.shape(rows)[0]
+  for i in range(n):
+    fh.write(struct.pack('<ffff', _f(rows[i][0]), _f(rows[i][1]), _f(rows[i][2]), _f(tail(i))))
+  for i in range(n, 256):
+    fh.write(struct.pack('<ffff', 0, 0, 0, 1))
+
+
 def _check_stock_lists_in_sync(films, papers):
   """Keep LUT stock order aligned with the UI."""
   here = Path(__file__).resolve().parent
@@ -371,18 +382,16 @@ _check_stock_lists_in_sync(film_stocks, print_papers)
 
 # start lut files:
 print('number of film stocks/paper offset:', len(film_stocks))
-num_films = len(film_stocks) + len(print_papers)
+num_stocks = len(film_stocks) + len(print_papers)
 f_lut = open("filmsim.lut", "wb")  # unified all data in 0..255, padded with zeros
-header = struct.pack('<iHBBii', 1234, 2, 4, 1, 256, 3*num_films)
+header = struct.pack('<iHBBii', 1234, 2, 4, 1, 256, 3*num_stocks)
 f_lut.write(header)
 
-n_film_stocks = len(film_stocks)  # film combo range; papers follow
-film_stocks.extend(print_papers)
+film_stocks.extend(print_papers)  # film combo range first, papers follow
 
 for f in film_stocks:
   print(f)
 
-  profile = DotMap()
   with open(_PROFILES_DIR / (f + '.json'), "rb") as file:
     profile = DotMap(json.load(file))
 
@@ -394,7 +403,7 @@ for f in film_stocks:
       profile.data.density_curves = dc[:, dev_idx:dev_idx + 1].tolist()
       model = profile.data.density_curves_model
       if model:
-        for key in ('centers', 'amplitudes', 'sigmas', 'alphas'):
+        for key in ('centers', 'amplitudes', 'sigmas'):
           vals = model.get(key)
           if vals:
             model[key] = [vals[dev_idx]]
@@ -408,16 +417,7 @@ for f in film_stocks:
       profile.data.log_sensitivity = np.repeat(profile.data.log_sensitivity, 3, axis=1)
     print(np.shape(profile.data.log_sensitivity)) # (41, 3) or (81, 3)
 
-    for i in range(0, np.shape(profile.data.log_sensitivity)[0]):
-      px = struct.pack('<ffff',
-          float('NaN') if profile.data.log_sensitivity[i][0] is None else profile.data.log_sensitivity[i][0],
-          float('NaN') if profile.data.log_sensitivity[i][1] is None else profile.data.log_sensitivity[i][1],
-          float('NaN') if profile.data.log_sensitivity[i][2] is None else profile.data.log_sensitivity[i][2],
-          1)
-      f_lut.write(px)
-    for i in range(np.shape(profile.data.log_sensitivity)[0], 256):
-      px = struct.pack('<ffff', 0, 0, 0, 1)
-      f_lut.write(px)
+    _write_rows(f_lut, profile.data.log_sensitivity, lambda i: 1)
 
     # Nx5 but Nx4 is enough for us (C M Y min_densitiy)
     profile.data.channel_density= np.array(profile.data.channel_density)
@@ -431,19 +431,12 @@ for f in film_stocks:
       # column axis is development_time (see dev_idx above), not channel.
       profile.data.base_density = profile.data.base_density[:,dev_idx]
     print(np.shape(profile.data.base_density)) # (41) or (81)
-    for i in range(0, np.shape(profile.data.channel_density)[0]):
-      px = struct.pack('<ffff',
-          float('NaN') if profile.data.channel_density[i][0] is None else profile.data.channel_density[i][0],
-          float('NaN') if profile.data.channel_density[i][1] is None else profile.data.channel_density[i][1],
-          float('NaN') if profile.data.channel_density[i][2] is None else profile.data.channel_density[i][2],
-          float('NaN') if profile.data.base_density[i] is None else profile.data.base_density[i])
-      f_lut.write(px)
-    for i in range(np.shape(profile.data.channel_density)[0], 256):
-      px = struct.pack('<ffff', 0, 0, 0, 1)
-      f_lut.write(px)
+    _write_rows(f_lut, profile.data.channel_density,
+                lambda i: profile.data.base_density[i])
 
 
-    # Texels 0-11: layer centers, amplitudes, inverse sigmas, and alphas.
+    # Texels 0-11: layer centers, amplitudes and inverse sigmas, one layer per
+    # group of four; the fourth texel of each group is unused.
     # Texels 12-22: stock, coupler, grain, halation, and exposure data.
     model = profile.data.density_curves_model
     assert model and 'centers' in model and len(model['centers']) > 0, \
@@ -457,8 +450,6 @@ for f in film_stocks:
       model['centers'][c]     = [model['centers'][c][i] for i in order]
       model['amplitudes'][c]  = [model['amplitudes'][c][i] for i in order]
       model['sigmas'][c]      = [model['sigmas'][c][i] for i in order]
-      if model.get('alphas'):
-        model['alphas'][c] = [model['alphas'][c][i] for i in order]
 
     dens_model = np.zeros((256, 4))
 
@@ -467,11 +458,9 @@ for f in film_stocks:
       amps = [model['amplitudes'][c if len(model['amplitudes']) > c else 0][l] for c in range(3)]
       sigs = [model['sigmas'][c if len(model['sigmas']) > c else 0][l] for c in range(3)]
       inv_sigs = [1.0 / max(float(sig), 1e-3) for sig in sigs]
-      alphas = [model['alphas'][c if len(model['alphas']) > c else 0][l] for c in range(3)] if 'alphas' in model and model['alphas'] else [0, 0, 0]
       dens_model[l*4 + 0, 0:3] = centers
       dens_model[l*4 + 1, 0:3] = amps
       dens_model[l*4 + 2, 0:3] = inv_sigs
-      dens_model[l*4 + 3, 0:3] = alphas
 
     # Film-only texels stay zero for papers.
     if profile.info.support == 'film':
@@ -498,9 +487,8 @@ for f in film_stocks:
       ref_cct = _REF_ILLUMINANT_CCT[ref_ill]
       dens_model[22, 3] = ref_cct
 
-      lam36 = 380.0 + 10.0 * np.arange(36)
       sens36 = np.stack([
-          np.interp(lam36, np.linspace(380.0, 780.0, profile.data.log_sensitivity.shape[0]),
+          np.interp(_LAM36, np.linspace(380.0, 780.0, profile.data.log_sensitivity.shape[0]),
                     profile.data.log_sensitivity[:, c].astype(float))
           for c in range(3)], axis=1)
       sens36 = np.nan_to_num(10.0 ** sens36, nan=0.0)  # NaN bands drop out, matching the shader's NaN handling
