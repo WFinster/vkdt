@@ -1,5 +1,4 @@
 #pragma once
-#include "graph-display.h"
 
 // this takes care of the memory allocation, buffer binding, image and
 // image_view creation and the descriptor sets for the connectors between
@@ -1381,7 +1380,7 @@ dt_graph_run_nodes_allocate(
       // create descriptor pool (keep at least one for each type)
       VkDescriptorPoolSize pool_sizes[] = {{
         .type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-        .descriptorCount = 1+DT_GRAPH_MAX_FRAMES*graph->dset_cnt_image_read + 3*s_graph_display_cnt,
+        .descriptorCount = 1+DT_GRAPH_MAX_FRAMES*graph->dset_cnt_image_read,
       }, {
         .type            = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
         .descriptorCount = 1+DT_GRAPH_MAX_FRAMES*graph->dset_cnt_image_write,

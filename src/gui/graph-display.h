@@ -1,15 +1,9 @@
 #pragma once
 // double buffering / display queue interfacing
 
-// wiring:
-// TODO wire dt_graph_display_image_cmd_copy just before submitting to the graph queue
-// TODO render_{darkroom,nodes}.c when rendering dt_image(), pass the dset of the dt_graph_display_image_t, not of the dt_node_t
-// TODO acquire display during rendering
-
 // cleanup:
 // TODO only do mipmaps here, not in graph (don't assign s_conn_mipmap and s_conn_concurrent)
 // TODO don't double buffer displays in the graph (don't assign s_conn_double_buffer and don't propagate)
-// TODO remove rdy
 // TODO remove graph_res?
 
 // this almost works like s_conn_double_buffer, only that it destroys/inits the resources
@@ -54,13 +48,17 @@ typedef struct dt_graph_display_images_t
 {
   uint64_t timeline_display; // this is the image currently used by display/ui dispatches
   uint64_t timeline_process; // this is the image currently in flight for graph dispatch (>=timeline_display, == if done and not rendering)
+  VkDescriptorPool dset_pool;
   dt_graph_display_image_t display_image[s_graph_display_cnt][3];
 }
 dt_graph_display_images_t;
 
+VkResult dt_graph_display_images_init(dt_graph_display_images_t *dspy);
+void dt_graph_display_images_cleanup(dt_graph_display_images_t *dspy);
+
 void dt_graph_display_image_cleanup(
-    dt_graph_display_image_t *d,
-    dt_graph_t *graph);
+    dt_graph_display_images_t *dspy,
+    dt_graph_display_image_t  *d);
 
 int // return 1 if display image is compatible with given display node
 dt_graph_display_image_check_compat(

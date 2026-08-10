@@ -1,7 +1,6 @@
 #pragma once
 #include "core/fs.h"
 #include "db/hash.h"
-#include "pipe/graph-display.h"
 
 static inline VkResult
 dt_graph_run_modules_upload_uniforms(
@@ -692,19 +691,11 @@ dt_graph_run_modules(
           }
         }
       }
-    const uint64_t wait_value[] = {
-      graph->dspy ? graph->dspy->timeline_process : graph->frame,
-      graph->dspy ? graph->dspy->timeline_display : 0,
-    };
-    VkSemaphore sem[] = {
-      graph->semaphore_process,
-      graph->semaphore_display,
-    };
     VkSemaphoreWaitInfo wait_info = {
       .sType          = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
-      .semaphoreCount = graph->dspy ? 2 : 1,
-      .pSemaphores    = sem,
-      .pValues        = wait_value,
+      .semaphoreCount = 1,
+      .pSemaphores    = &graph->semaphore_process,
+      .pValues        = &graph->timeline_value,
     };
     QVKR(vkWaitSemaphores(qvk.device, &wait_info, UINT64_MAX));
     for(int i=0;i<graph->conn_image_end;i++)

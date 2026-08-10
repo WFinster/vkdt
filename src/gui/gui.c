@@ -270,6 +270,7 @@ int dt_gui_init()
   }
 
   if(dt_gui_win_init_vk(&vkdt.win)) return 1;
+  dt_graph_display_images_init(&vkdt.dspy);
 
   { // joystick detection: find first gamepad.
   char filename[PATH_MAX];
@@ -641,6 +642,7 @@ void dt_gui_cleanup()
     dt_rc_write(&vkdt.rc, configfile);
   dt_rc_cleanup(&vkdt.rc);
   dt_graph_cleanup(&vkdt.graph_dev);
+  dt_graph_display_images_cleanup(&vkdt.dspy);
 
   dt_gui_win_cleanup(&vkdt.win);
 
@@ -649,12 +651,23 @@ void dt_gui_cleanup()
   threads_mutex_destroy(&vkdt.wstate.notification_mutex);
 }
 
+int
+dt_gui_display_in_use(uint64_t val)
+{
+  for(int k=0;k<DT_GUI_MAX_IMAGES;k++)
+    if(vkdt.win.display_in_use[k] == val) return 1;
+  for(int k=0;k<DT_GUI_MAX_IMAGES;k++)
+    if(vkdt.win1.display_in_use[k] == val) return 1;
+  return 0;
+}
+
 static inline VkResult
 dt_gui_win_render(struct nk_context *ctx, dt_gui_win_t *win)
 {
   VkSemaphore render_complete_semaphore = win->sem_render_complete[win->sem_index];
   VkSemaphore frame_complete_semaphore  = win->sem_frame_complete [win->sem_index];
   VkSemaphore image_acquired_semaphore  = win->sem_image_acquired [win->sem_index];
+  win->display_in_use[win->sem_index] = vkdt.dspy.timeline_display;
   QVKR(vkWaitForFences(qvk.device, 1, win->fence+win->sem_fence[win->sem_index], VK_TRUE, UINT64_MAX)); // make sure the semaphore is free
   // timeout is in nanoseconds (these are ~2sec)
   VkResult res = vkAcquireNextImageKHR(qvk.device, win->swap_chain, 2ul<<30, image_acquired_semaphore, VK_NULL_HANDLE, &win->frame_index);
@@ -691,16 +704,16 @@ dt_gui_win_render(struct nk_context *ctx, dt_gui_win_t *win)
     VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT|VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
     VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, };
   uint64_t value_wait  [] = { 0, };
-  uint64_t value_signal[] = { ++win->frame_global, 0, vkdt.dspy.timeline_display };
+  uint64_t value_signal[] = { ++win->frame_global, 0 };
   VkTimelineSemaphoreSubmitInfo timeline_info = {
     .sType                     = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
     .waitSemaphoreValueCount   = 1,
     .pWaitSemaphoreValues      = value_wait,
-    .signalSemaphoreValueCount = 3,
+    .signalSemaphoreValueCount = 2,
     .pSignalSemaphoreValues    = value_signal,
   };
   VkSemaphore sem_wait  [] = { image_acquired_semaphore };
-  VkSemaphore sem_signal[] = { frame_complete_semaphore, render_complete_semaphore, vkdt.graph_dev.semaphore_display };
+  VkSemaphore sem_signal[] = { frame_complete_semaphore, render_complete_semaphore };
   VkSubmitInfo submit = {
     .sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO,
     .pNext                = &timeline_info,
@@ -709,7 +722,7 @@ dt_gui_win_render(struct nk_context *ctx, dt_gui_win_t *win)
     .pWaitDstStageMask    = wait_stage,
     .commandBufferCount   = 1,
     .pCommandBuffers      = win->command_buffer+i,
-    .signalSemaphoreCount = 3,
+    .signalSemaphoreCount = 2,
     .pSignalSemaphores    = sem_signal,
   };
 

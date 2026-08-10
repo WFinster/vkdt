@@ -1,4 +1,5 @@
 GUI_O=gui/gui.o\
+      gui/graph-display.o\
       gui/render.o\
       gui/render_lighttable.o\
       gui/render_darkroom.o\
@@ -15,6 +16,7 @@ GUI_H=gui/gui.h\
       gui/api.h\
       gui/api_gui.h\
       gui/font_metrics.h\
+      gui/graph-display.h\
       gui/hotkey.h\
       gui/job_copy.h\
       gui/keyaccel.h\

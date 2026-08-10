@@ -1368,6 +1368,7 @@ darkroom_enter()
   if(!vkdt.graph_dev.module)
     dt_graph_init(&vkdt.graph_dev, s_queue_compute);
   vkdt.graph_dev.dspy = &vkdt.dspy;
+  vkdt.graph_dev.dspy_acquire = &dt_graph_display_acquire_for_processing;
   vkdt.graph_dev.gui_attached = 1;
   vkdt.graph_dev.gui_colour[0] = vkdt.style.colour[NK_COLOR_DT_ACCENT].r/255.0f;
   vkdt.graph_dev.gui_colour[1] = vkdt.style.colour[NK_COLOR_DT_ACCENT].g/255.0f;

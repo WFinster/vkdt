@@ -1,7 +1,6 @@
 #pragma once
 #include "core/colour.h"
 #include "pipe/graph.h"
-#include "pipe/graph-display.h"
 #include "db/thumbnails.h"
 #include "db/db.h"
 #include "db/rc.h"
@@ -9,13 +8,14 @@
 #include "widget_image_util.h"
 #include "widget_radial_menu_dr-fwd.h"
 #include "nk.h"
+#include "graph-display.h"
 
 #include <vulkan/vulkan.h>
 #include <math.h>
 #include <GLFW/glfw3.h>
 
 // max images in flight in vulkan pipeline/swap chain
-#define DT_GUI_MAX_IMAGES 8
+#define DT_GUI_MAX_IMAGES 2
 #define NK_UPDATE_ACTIVE do {if(vkdt.ctx.current && (vkdt.ctx.current->property.active || vkdt.ctx.current->edit.active)) vkdt.wstate.nk_active_next = 1;} while(0)
 
 // view modes, lighttable, darkroom, ..
@@ -169,6 +169,7 @@ typedef struct dt_gui_win_t
   VkCommandPool      command_pool  [DT_GUI_MAX_IMAGES];
   VkCommandBuffer    command_buffer[DT_GUI_MAX_IMAGES];
   VkFramebuffer      framebuffer   [DT_GUI_MAX_IMAGES];
+  uint64_t           display_in_use[DT_GUI_MAX_IMAGES];
 
   uint64_t           frame_global;
   uint32_t           sem_index;
@@ -285,6 +286,9 @@ void dt_gui_win1_close();
 
 // init style variables / padding based on fontsize / colours from text file
 void dt_gui_style_to_state();
+
+// return 1 if the given image id is potentially in use by an active command buffer
+int dt_gui_display_in_use(uint64_t val);
 
 // this is only a shorthand for the direct access to vkdt.win*.content_scale
 // selecting the right one based on the glfw window. this is otherwise

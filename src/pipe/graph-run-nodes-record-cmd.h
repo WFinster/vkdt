@@ -428,12 +428,7 @@ dt_graph_run_nodes_record_cmd(
 {
   if(run & s_graph_run_record_cmd_buf)
   {
-    VkCommandBufferBeginInfo begin_info = {
-      .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-      .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-    };
     int buf_curr = graph->double_buffer;
-    QVKR(vkBeginCommandBuffer(dt_graph_cmd_buf(graph), &begin_info));
     graph->query[buf_curr].cnt = 0;
     vkCmdResetQueryPool(dt_graph_cmd_buf(graph), graph->query[buf_curr].pool, 0, graph->query[buf_curr].max);
     int bvh_cnt = 0;
@@ -460,15 +455,10 @@ dt_graph_run_nodes_record_cmd(
         dt_log(s_log_perf, "create raytrace accel:\t%8.3f ms", 1000.0*(rt_end-rt_beg));
         bvh_cnt = -1; // don't do this again
       }
-      if(res != VK_SUCCESS)
-      { // need to clean up command buffer before we quit
-        QVKR(vkEndCommandBuffer(dt_graph_cmd_buf(graph)));
-        return res;
-      }
+      if(res != VK_SUCCESS) return res;
     }
     double rt_end = dt_time();
     dt_log(s_log_perf, "record command buffer:\t%8.3f ms", 1000.0*(rt_end-rt_beg));
-    QVKR(vkEndCommandBuffer(dt_graph_cmd_buf(graph)));
   }
   return VK_SUCCESS;
 }

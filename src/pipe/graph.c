@@ -180,17 +180,11 @@ graph_destroy_per_image_resources(dt_graph_t *g)
 static VkResult
 graph_wait_gpu(dt_graph_t *g, const char *caller)
 {
-  // if no gui is attached, display indices stay at 0, so this is a no-op
-  const uint64_t wait_value[] = {
-    g->dspy ? g->dspy->timeline_process : g->frame,
-    g->dspy ? g->dspy->timeline_display : 0,
-  };
-  VkSemaphore sem[] = { g->semaphore_process, g->semaphore_display };
   VkSemaphoreWaitInfo wait_info = {
     .sType          = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
-    .semaphoreCount = g->dspy ? 2 : 1,
-    .pSemaphores    = sem,
-    .pValues        = wait_value,
+    .semaphoreCount = 1,
+    .pSemaphores    = &g->semaphore_process,
+    .pValues        = &g->timeline_value,
   };
   VkResult res = vkWaitSemaphores(qvk.device, &wait_info, UINT64_MAX);
   if(res != VK_SUCCESS)
@@ -716,6 +710,16 @@ dt_graph_print_run(
       run & s_graph_run_before_active ? "<active" : "");
 }
 
+static inline uint64_t 
+get_timeline_value(dt_graph_t *g)
+{
+  if(g->dspy && g->dspy_acquire) return g->dspy_acquire(g);
+  uint64_t value_process = 0; // what processing semaphore finished
+  VkResult res = vkGetSemaphoreCounterValue(qvk.device, g->semaphore_process, &value_process);
+  if(res != VK_SUCCESS) return 0; // uhm?
+  return value_process + 1;
+}
+
 VkResult dt_graph_run(
     dt_graph_t     *graph,
     dt_graph_run_t  run)
@@ -729,8 +733,9 @@ VkResult dt_graph_run(
   graph->gui_msg = 0;
 
   // wait for last invocation of our command buffer to finish:
-  // wait for process timeline (will be incremented below during acquire) or frame (was already incremented)
-  uint64_t timeline = graph->dspy ? graph->dspy->timeline_process - 1 : graph->frame - 2;
+  // will be incremented below during acquire, we'll dispatch tv+1.
+  // the other dispatch would have run tv, and we previously tv-1
+  uint64_t timeline = MAX(1, graph->timeline_value) - 1;
   VkSemaphoreWaitInfo wait_info = {
     .sType          = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
     .semaphoreCount = 1,
@@ -818,6 +823,14 @@ VkResult dt_graph_run(
     QVKR(dt_graph_run_modules_upload_uniforms(graph, run));
 
     // record command buffer, including memory barriers for transfers (to uniforms and staging)
+    if(run & s_graph_run_record_cmd_buf)
+    {
+      VkCommandBufferBeginInfo begin_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+      };
+      QVKR(vkBeginCommandBuffer(dt_graph_cmd_buf(graph), &begin_info));
+    }
     QVKR(dt_graph_run_nodes_record_cmd(graph, run, nodeid, cnt, module_flags));
   } // end scope, done with nodes
 
@@ -837,16 +850,17 @@ VkResult dt_graph_run(
   dt_log(s_log_perf, "record cmd buffer:\t%8.3f ms", 1000.0*(clock_end - clock_beg));
 
 
-  uint64_t timeline_value = 0;
   if(run & s_graph_run_record_cmd_buf)
   {
-    timeline_value = dt_graph_display_acquire_for_processing(graph);
+    VkCommandBuffer cmd_buf = dt_graph_cmd_buf(graph);
+    graph->timeline_value = get_timeline_value(graph);
+    QVKR(vkEndCommandBuffer(cmd_buf));
+
     VkTimelineSemaphoreSubmitInfo timeline_info = {
       .sType                     = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
       .signalSemaphoreValueCount = 1,
-      .pSignalSemaphoreValues    = &timeline_value, // signal this buffer is ready to display once we're done
+      .pSignalSemaphoreValues    = &graph->timeline_value, // signal this buffer is ready to display once we're done
     };
-    VkCommandBuffer cmd_buf = dt_graph_cmd_buf(graph);
     VkSubmitInfo submit = {
       .sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO,
       .commandBufferCount   = 1,
@@ -866,7 +880,7 @@ VkResult dt_graph_run(
       .sType          = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
       .semaphoreCount = 1,
       .pSemaphores    = &graph->semaphore_process,
-      .pValues        = &timeline_value,
+      .pValues        = &graph->timeline_value,
     };
     if(run & s_graph_run_wait_done) // no timeout
       QVKR(vkWaitSemaphores(qvk.device, &wait_info, UINT64_MAX));
@@ -881,7 +895,7 @@ VkResult dt_graph_run(
     if(run & s_graph_run_wait_done) q = buf_curr; // if we're synchronous, use the one we just waited for
     else
     { // async, have to wait for previous queries to come back:
-      uint64_t prev_value = timeline_value-1;
+      uint64_t prev_value = MAX(1, graph->timeline_value)-1;
       VkSemaphoreWaitInfo wait_info = {
         .sType          = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
         .semaphoreCount = 1,
