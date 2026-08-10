@@ -51,7 +51,6 @@ void render_nodes_right_panel()
     NK_UPDATE_ACTIVE;
     nk_end(ctx);
   }
-  const int display_frame = vkdt.graph_dev.double_buffer % 2;
   static dt_image_widget_t imgw[] = {
     { .look_at_x = 0, .look_at_y = 0, .scale=1.0 },
     { .look_at_x = 0, .look_at_y = 0, .scale=1.0 },
@@ -63,7 +62,6 @@ void render_nodes_right_panel()
     dt_node_t *out = dt_graph_get_display(&vkdt.graph_dev, dsp[d]);
     if(out)
     {
-      const int rdy = vkdt.graph_res[display_frame] == VK_SUCCESS;
       const int popout = (dsp[d] == dt_token("main")) && vkdt.win1.window;
       char title[20] = {0};
       snprintf(title, sizeof(title), "nodes %" PRItkn, dt_token_str(dsp[d]));
@@ -84,9 +82,9 @@ void render_nodes_right_panel()
         int ht = wd * out->connector[0].roi.full_ht / (float)out->connector[0].roi.full_wd; // image aspect
         nk_layout_row_dynamic(ctx, ht, 1);
         if(dsp[d] == dt_token("main"))
-          dt_image(ctx, &vkdt.wstate.img_widget, out, 1, popout ? 0 : 1, 0, rdy);
+          dt_image(ctx, &vkdt.wstate.img_widget, out, 1, popout ? 0 : 1, 0);
         else
-          dt_image(ctx, imgw+d, out, 1, 0, 0, rdy);
+          dt_image(ctx, imgw+d, out, 1, 0, 0);
       }
       if(popout)
       {

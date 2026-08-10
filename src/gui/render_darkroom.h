@@ -1602,19 +1602,17 @@ static inline void render_darkroom_widgets(
   }
   if(active)
   {
-    const int display_frame = vkdt.graph_dev.double_buffer % 2;
     if(graph->active_module == curr &&
         dt_module_get_connector(arr+curr, dt_token("dspy")) >= 0)
     {
       dt_node_t *out_dspy = dt_graph_get_display(graph, dt_token("dspy"));
       if(out_dspy)
       {
-        int rdy = vkdt.graph_res[display_frame] == VK_SUCCESS;
         dt_image_widget_t imgw = { .look_at_x = 0, .look_at_y = 0, .scale=1.0 };
         int wd = vkdt.state.panel_wd;
         int ht = wd * out_dspy->connector[0].roi.full_ht / (float)out_dspy->connector[0].roi.full_wd; // image aspect
         nk_layout_row_dynamic(ctx, ht, 1);
-        dt_image(ctx, &imgw, out_dspy, 0, 0, 0, rdy);
+        dt_image(ctx, &imgw, out_dspy, 0, 0, 0);
       }
     }
     for(int i=0;i<arr[curr].so->num_params;i++)

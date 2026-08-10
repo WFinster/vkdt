@@ -356,8 +356,7 @@ dt_image(
     dt_node_t         *out,     // make sure the out->dset is valid!
     int                events,  // if !=0 provide zoom/pan interaction
     int                main,    // if !=0 do on-canvas ui elements
-    int         center_display, // if !=0 allow mouse events not only on the image but on the full center canvas
-    int                rdy)     // don't use descriptor set if it's not ready
+    int         center_display) // if !=0 allow mouse events not only on the image but on the full center canvas
 {
   if(!out) return;
   w->out = out;

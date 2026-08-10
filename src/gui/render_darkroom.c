@@ -416,7 +416,6 @@ void render_darkroom()
   int win_x = vkdt.state.center_x,  win_y = vkdt.state.center_y;
   int win_w = vkdt.state.center_wd, win_h = vkdt.state.center_ht - vkdt.wstate.dopesheet_view;
   struct nk_rect bounds = {win_x, win_y, win_w, win_h};
-  const int display_frame = vkdt.graph_dev.double_buffer % 2;
   if(!dt_gui_input_blocked() && !vkdt.wstate.dragkey_latched && nk_input_is_mouse_click_in_rect(&vkdt.ctx.input, NK_BUTTON_DOUBLE, bounds))
   {
     dt_view_switch(s_view_lighttable);
@@ -452,11 +451,10 @@ void render_darkroom()
     dt_node_t *out_main = dt_graph_get_display(&vkdt.graph_dev, dt_token("main"));
     if(out_main)
     {
-      int rdy = vkdt.graph_res[display_frame] == VK_SUCCESS;
       int events = !vkdt.wstate.grabbed && !disabled;
       // center view has on-canvas widgets (but only if there *is* an image):
       nk_layout_row_dynamic(&vkdt.ctx, win_h, 1);
-      dt_image(&vkdt.ctx, &vkdt.wstate.img_widget, out_main, events, out_main != 0, 1, rdy);
+      dt_image(&vkdt.ctx, &vkdt.wstate.img_widget, out_main, events, out_main != 0, 1);
     }
     float wd = 0.8*win_y;
     const uint32_t ci = dt_db_current_imgid(&vkdt.db);
@@ -599,14 +597,13 @@ void render_darkroom()
   { // right panel
     // draw histogram image:
     dt_node_t *out_hist = dt_graph_get_display(&vkdt.graph_dev, dt_token("hist"));
-    if(out_hist && out_hist->dset[display_frame])
+    if(out_hist)
     {
-      int rdy = vkdt.graph_res[display_frame] == VK_SUCCESS;
       dt_image_widget_t imgw = { .look_at_x = 0, .look_at_y = 0, .scale=1.0 };
       int wd = vkdt.state.panel_wd;
       int ht = wd * out_hist->connector[0].roi.full_ht / (float)out_hist->connector[0].roi.full_wd; // image aspect
       nk_layout_row_dynamic(ctx, ht, 1);
-      dt_image(ctx, &imgw, out_hist, 0, 0, 0, rdy);
+      dt_image(ctx, &imgw, out_hist, 0, 0, 0);
     }
 
     static dt_image_widget_t imgw[] = {
@@ -618,11 +615,10 @@ void render_darkroom()
       dt_node_t *out = dt_graph_get_display(&vkdt.graph_dev, dsp[d]);
       if(out)
       {
-        int rdy = vkdt.graph_res[display_frame] == VK_SUCCESS;
         int wd = vkdt.state.panel_wd;
         int ht = wd * out->connector[0].roi.full_ht / (float)out->connector[0].roi.full_wd; // image aspect
         nk_layout_row_dynamic(ctx, ht, 1);
-        dt_image(ctx, imgw+d, out, 1, 0, 0, rdy);
+        dt_image(ctx, imgw+d, out, 1, 0, 0);
       }
     }
 
