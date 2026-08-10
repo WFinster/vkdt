@@ -385,7 +385,6 @@ dt_image(
   im1[1] = CLAMP(im1[1], 0.0f, 1.0f);
   dt_image_to_view(w, im0, v0);
   dt_image_to_view(w, im1, v1);
-  const int display_frame = out->module->graph->double_buffer;
   struct nk_rect subimg = {w->wd * im0[0], w->ht * im0[1], w->wd * (im1[0]-im0[0]), w->ht * (im1[1]-im0[1])};
   struct nk_rect disp = {v0[0], v0[1], v1[0]-v0[0], v1[1]-v0[1]};
   float scale1 = 1.0f/MIN(w->win_w/w->wd, w->win_h/w->ht);
@@ -415,10 +414,10 @@ dt_image(
     };
     nk_fill_rect(buf, white_rect, 0.0f, (struct nk_color){255, 255, 255, 255});
   }
-  if(!rdy) subimg = (struct nk_rect){0};
+  VkDescriptorSet dset = dt_graph_display_get_dset(out->module->graph, out->module->inst);
+  if(!dset) subimg = (struct nk_rect){0};
   struct nk_image nkimg = nk_subimage_ptr(
-      out->dset[display_frame],
-      w->wd, w->ht, subimg);
+      dset, w->wd, w->ht, subimg);
   int hover = nk_input_is_mouse_hovering_rect(&ctx->input, disp);
   if(center_display)
   {

@@ -1241,11 +1241,14 @@ darkroom_process()
   }
 
   { // async graph compute vs. sync cpu + gui rendering
+#if 0
     // graph->double_buffer points to the buffer currently locked for render/display
     // 1-double buffer is still running on gpu, has not been swapped in yet
     int running = (vkdt.graph_res[vkdt.graph_dev.double_buffer^1] == -1);
     if(running)
     {
+      // TODO remove graph_res?
+      // XXX TODO ask graph-display whether processing the backbuffer finished so we can schedule another!
       uint64_t value;
       VkResult res = vkGetSemaphoreCounterValue(qvk.device, vkdt.graph_dev.semaphore_process, &value);
       if(res == VK_SUCCESS && value >= vkdt.graph_dev.process_dbuffer[vkdt.graph_dev.double_buffer^1])
@@ -1256,13 +1259,15 @@ darkroom_process()
         // fprintf(stderr, "displaying dbuf %d\n", vkdt.graph_dev.double_buffer);
       }
     }
+#endif
 #if 0 // animation mode:
     running = 0; // start new frame regardless whether anything is still running or not!
     // the graph will wait on the dbuf it's currently writing internally.
     // we'll wait for the other one after execution (potential gui lockup, but faster for anim)
 #endif
 
-    if(!running && vkdt.graph_dev.runflags) // stills and stopped animations
+    int needs_run = vkdt.graph_dev.runflags && dt_graph_display_have_free_process(&vkdt.graph_dev);
+    if(needs_run)
     { // double buffered async compute
       vkdt.graph_dev.double_buffer ^= 1; // work on the one that's not currently locked
       // fprintf(stderr, "rendering dbuf %d frame %d\n", vkdt.graph_dev.double_buffer, vkdt.graph_dev.frame);
@@ -1272,13 +1277,13 @@ darkroom_process()
       // this results in much smoother user interface operation, and for non-lod renders, we'll be
       // displaying almost the same frame. for lod, unfortunately, that's not the case. for now we'll flicker
       // with bg colour in the case of interaction lod:
-      if(vkdt.wstate.lod_interact > vkdt.wstate.lod)
-        if(vkdt.graph_dev.runflags & s_graph_run_alloc) // strictly speaking, allocation also invalidates the other dbuf
-          vkdt.graph_res[1-vkdt.graph_dev.double_buffer] = VK_INCOMPLETE;
+      // if(vkdt.wstate.lod_interact > vkdt.wstate.lod)
+      //   if(vkdt.graph_dev.runflags & s_graph_run_alloc) // strictly speaking, allocation also invalidates the other dbuf
+      //     vkdt.graph_res[1-vkdt.graph_dev.double_buffer] = VK_INCOMPLETE;
       vkdt.graph_res[vkdt.graph_dev.double_buffer] =
         dt_graph_run(&vkdt.graph_dev, (vkdt.graph_dev.runflags & ~s_graph_run_wait_done));
       clear_runflags();
-      vkdt.graph_dev.double_buffer ^= 1; // reset to the locked/already finished one
+      // vkdt.graph_dev.double_buffer ^= 1; // reset to the locked/already finished one
 #if 0
       // fast lockstep animation mode: wait for the other backbuffer to finish, so we have something for the ui:
       VkSemaphoreWaitInfo wait_info = {
@@ -1366,6 +1371,7 @@ darkroom_enter()
 
   if(!vkdt.graph_dev.module)
     dt_graph_init(&vkdt.graph_dev, s_queue_compute);
+  vkdt.graph_dev.dspy = &vkdt.dspy;
   vkdt.graph_dev.gui_attached = 1;
   vkdt.graph_dev.gui_colour[0] = vkdt.style.colour[NK_COLOR_DT_ACCENT].r/255.0f;
   vkdt.graph_dev.gui_colour[1] = vkdt.style.colour[NK_COLOR_DT_ACCENT].g/255.0f;

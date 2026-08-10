@@ -13,8 +13,8 @@
 #include "db/stringpool.h"
 #endif
 #include "cycles.h"
-#include "graph-run-modules.h"
 #include "graph-run-nodes-allocate.h"
+#include "graph-run-modules.h"
 #include "graph-run-nodes-upload.h"
 #include "graph-run-nodes-record-cmd.h"
 #include "graph-run-nodes-download.h"
@@ -182,13 +182,13 @@ graph_wait_gpu(dt_graph_t *g, const char *caller)
 {
   // if no gui is attached, display indices stay at 0, so this is a no-op
   const uint64_t wait_value[] = {
-    MAX(g->display_dbuffer[0], g->display_dbuffer[1]),
-    MAX(g->process_dbuffer[0], g->process_dbuffer[1]),
+    g->dspy ? g->dspy->timeline_process : g->frame,
+    g->dspy ? g->dspy->timeline_display : 0,
   };
-  VkSemaphore sem[] = { g->semaphore_display, g->semaphore_process };
+  VkSemaphore sem[] = { g->semaphore_process, g->semaphore_display };
   VkSemaphoreWaitInfo wait_info = {
     .sType          = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
-    .semaphoreCount = 2,
+    .semaphoreCount = g->dspy ? 2 : 1,
     .pSemaphores    = sem,
     .pValues        = wait_value,
   };
@@ -729,11 +729,13 @@ VkResult dt_graph_run(
   graph->gui_msg = 0;
 
   // wait for last invocation of our command buffer to finish:
+  // wait for process timeline (will be incremented below during acquire) or frame (was already incremented)
+  uint64_t timeline = graph->dspy ? graph->dspy->timeline_process - 1 : graph->frame - 2;
   VkSemaphoreWaitInfo wait_info = {
     .sType          = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
     .semaphoreCount = 1,
     .pSemaphores    = &graph->semaphore_process,
-    .pValues        = &graph->process_dbuffer[buf_curr],
+    .pValues        = &timeline,
   };
   QVKR(vkWaitSemaphores(qvk.device, &wait_info, UINT64_MAX));
 
@@ -844,7 +846,6 @@ VkResult dt_graph_run(
       .signalSemaphoreValueCount = 1,
       .pSignalSemaphoreValues    = &timeline_value, // signal this buffer is ready to display once we're done
     };
-    VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
     VkCommandBuffer cmd_buf = dt_graph_cmd_buf(graph);
     VkSubmitInfo submit = {
       .sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO,

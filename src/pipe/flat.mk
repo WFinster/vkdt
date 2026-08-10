@@ -5,6 +5,7 @@ pipe/global.o\
 pipe/graph.o\
 pipe/graph-io.o\
 pipe/graph-export.o\
+pipe/graph-display.o\
 pipe/module.o\
 pipe/raytrace.o\
 pipe/res.o
@@ -25,6 +26,7 @@ pipe/graph-run-nodes-record-cmd.h\
 pipe/graph-run-nodes-download.h\
 pipe/graph-io.h\
 pipe/graph-print.h\
+pipe/graph-display.h\
 pipe/graph-export.h\
 pipe/graph-traverse.inc\
 pipe/modules/api.h\

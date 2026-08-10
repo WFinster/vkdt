@@ -112,12 +112,16 @@ dt_graph_run_nodes_upload(
                     yuv ? 2 : 1, yuv ? regions+1 : regions);
                 IMG_LAYOUT(img, GENERAL, GENERAL);
                 QVKR(vkEndCommandBuffer(cmd_buf));
+
+                // XXX TODO use separate semaphore only for here. we'll wait for it in cpu anyways
+
                 // we add one more command list, locking the command buffer in this case
-                graph->process_dbuffer[graph->double_buffer] = MAX(graph->process_dbuffer[0], graph->process_dbuffer[1]) + 1;
+                uint64_t timeline = 0; // XXX init that with semaphore on the outside
+                timeline ++;
                 VkTimelineSemaphoreSubmitInfo timeline_info = {
                   .sType                     = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
                   .signalSemaphoreValueCount = 1,
-                  .pSignalSemaphoreValues    = &graph->process_dbuffer[graph->double_buffer], // lock for writing, this signal will remove the lock
+                  .pSignalSemaphoreValues    = &timeline, // lock for writing, this signal will remove the lock
                 };
                 VkSubmitInfo submit = {
                   .sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO,
@@ -125,15 +129,15 @@ dt_graph_run_nodes_upload(
                   .pCommandBuffers      = &cmd_buf,
                   .pNext                = &timeline_info,
                   .signalSemaphoreCount = 1,
-                  .pSignalSemaphores    = &graph->semaphore_process,
+                  .pSignalSemaphores    = &graph->semaphore_process, // XXX other sem!!
                 };
                 QVKLR(&qvk.queue[qvk.qid[graph->queue_name]].mutex,
                     vkQueueSubmit(qvk.queue[qvk.qid[graph->queue_name]].queue, 1, &submit, 0));
                 VkSemaphoreWaitInfo wait_info = {
                   .sType          = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
                   .semaphoreCount = 1,
-                  .pSemaphores    = &graph->semaphore_process,
-                  .pValues        = &graph->process_dbuffer[graph->double_buffer],
+                  .pSemaphores    = &graph->semaphore_process, // XXX different one!
+                  .pValues        = &timeline,
                 };
                 // wait inline on our semaphore because we share the staging buf
                 QVKR(vkWaitSemaphores(qvk.device, &wait_info, UINT64_MAX));

@@ -7,7 +7,7 @@
 
 // create nodes requires roi requires alloc requires upload source
 typedef uint32_t dt_graph_run_t;
-typedef dt_graph_display_images_t dt_graph_display_images_t;
+typedef struct dt_graph_display_images_t dt_graph_display_images_t;
 
 typedef struct dt_connector_image_t
 {

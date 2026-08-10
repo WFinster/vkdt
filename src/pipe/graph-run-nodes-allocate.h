@@ -1,4 +1,5 @@
 #pragma once
+#include "graph-display.h"
 
 // this takes care of the memory allocation, buffer binding, image and
 // image_view creation and the descriptor sets for the connectors between
@@ -13,28 +14,6 @@
 // fixed-size sub-allocator that makes aliasing in further pipeline processing
 // impossible, so it is only really useful for dynamic texture caches that go
 // directly from CPU to the consumer node.
-
-static inline VkResult
-dt_check_device_allocation(uint64_t size, int heap_index)
-{
-  // vkAllocateMemory overcommits, moves to system ram, and sometimes works even when you think it should not.
-  // find out whether we still stay in device memory, and fail over if not:
-  if(size > qvk.max_allocation_size) return VK_ERROR_OUT_OF_DEVICE_MEMORY;
-  VkPhysicalDeviceMemoryBudgetPropertiesEXT budget = {
-    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT,
-  };
-  VkPhysicalDeviceMemoryProperties2 memprop = {
-    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2,
-    .pNext = &budget,
-  };
-  vkGetPhysicalDeviceMemoryProperties2(qvk.physical_device, &memprop);
-  for (int i=0;i<memprop.memoryProperties.memoryHeapCount;i++)
-    if(memprop.memoryProperties.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
-      if(budget.heapBudget[i] > size)
-        return VK_SUCCESS;
-  dt_log(s_log_qvk, "failed to allocate %ld MB index %d", size/1024/1024, heap_index);
-  return VK_ERROR_OUT_OF_DEVICE_MEMORY;
-}
 
 static inline VkFormat
 dt_connector_vkformat(const dt_connector_t *c)
@@ -93,6 +72,28 @@ dt_connector_vkformat(const dt_connector_t *c)
   if(c->format == dt_token("yuv")) return VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
   if(c->format == dt_token("bc1")) return VK_FORMAT_BC1_RGB_UNORM_BLOCK;
   return VK_FORMAT_UNDEFINED;
+}
+
+static inline VkResult
+dt_check_device_allocation(uint64_t size, int heap_index)
+{
+  // vkAllocateMemory overcommits, moves to system ram, and sometimes works even when you think it should not.
+  // find out whether we still stay in device memory, and fail over if not:
+  if(size > qvk.max_allocation_size) return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+  VkPhysicalDeviceMemoryBudgetPropertiesEXT budget = {
+    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT,
+  };
+  VkPhysicalDeviceMemoryProperties2 memprop = {
+    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2,
+    .pNext = &budget,
+  };
+  vkGetPhysicalDeviceMemoryProperties2(qvk.physical_device, &memprop);
+  for (int i=0;i<memprop.memoryProperties.memoryHeapCount;i++)
+    if(memprop.memoryProperties.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+      if(budget.heapBudget[i] > size)
+        return VK_SUCCESS;
+  dt_log(s_log_qvk, "failed to allocate %ld MB index %d", size/1024/1024, heap_index);
+  return VK_ERROR_OUT_OF_DEVICE_MEMORY;
 }
 
 // update descriptor sets
@@ -1380,7 +1381,7 @@ dt_graph_run_nodes_allocate(
       // create descriptor pool (keep at least one for each type)
       VkDescriptorPoolSize pool_sizes[] = {{
         .type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-        .descriptorCount = 1+DT_GRAPH_MAX_FRAMES*graph->dset_cnt_image_read + 3*s_graph_display_image_cnt,
+        .descriptorCount = 1+DT_GRAPH_MAX_FRAMES*graph->dset_cnt_image_read + 3*s_graph_display_cnt,
       }, {
         .type            = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
         .descriptorCount = 1+DT_GRAPH_MAX_FRAMES*graph->dset_cnt_image_write,
