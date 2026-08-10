@@ -834,16 +834,15 @@ VkResult dt_graph_run(
   double clock_end = dt_time();
   dt_log(s_log_perf, "record cmd buffer:\t%8.3f ms", 1000.0*(clock_end - clock_beg));
 
+
+  uint64_t timeline_value = 0;
   if(run & s_graph_run_record_cmd_buf)
   {
-    graph->process_dbuffer[buf_curr] = MAX(graph->process_dbuffer[0], graph->process_dbuffer[1]) + 1;
-    // we add one more command list working on the buf_curr double buffer with write access
+    timeline_value = dt_graph_display_acquire_for_processing(graph);
     VkTimelineSemaphoreSubmitInfo timeline_info = {
       .sType                     = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
-      .waitSemaphoreValueCount   = 1,
-      .pWaitSemaphoreValues      = &graph->display_dbuffer[buf_curr], // we want to write this buffer, wait for last display command to read it
       .signalSemaphoreValueCount = 1,
-      .pSignalSemaphoreValues    = &graph->process_dbuffer[buf_curr], // lock buf_curr for writing, this signal will remove the lock
+      .pSignalSemaphoreValues    = &timeline_value, // signal this buffer is ready to display once we're done
     };
     VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
     VkCommandBuffer cmd_buf = dt_graph_cmd_buf(graph);
@@ -852,9 +851,6 @@ VkResult dt_graph_run(
       .commandBufferCount   = 1,
       .pCommandBuffers      = &cmd_buf,
       .pNext                = &timeline_info,
-      .waitSemaphoreCount   = 1,
-      .pWaitSemaphores      = &graph->semaphore_display,
-      .pWaitDstStageMask    = &wait_stage,
       .signalSemaphoreCount = 1,
       .pSignalSemaphores    = &graph->semaphore_process,
     };
@@ -869,7 +865,7 @@ VkResult dt_graph_run(
       .sType          = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
       .semaphoreCount = 1,
       .pSemaphores    = &graph->semaphore_process,
-      .pValues        = &graph->process_dbuffer[buf_curr],
+      .pValues        = &timeline_value,
     };
     if(run & s_graph_run_wait_done) // no timeout
       QVKR(vkWaitSemaphores(qvk.device, &wait_info, UINT64_MAX));
@@ -878,17 +874,18 @@ VkResult dt_graph_run(
   // download sink data from GPU to CPU
   dt_graph_run_nodes_download(graph, run, module_flags);
 
-  if(dt_log_global.mask & s_log_perf)
+  if((run & s_graph_run_record_cmd_buf) && (dt_log_global.mask & s_log_perf))
   {
     int q = buf_prev;
     if(run & s_graph_run_wait_done) q = buf_curr; // if we're synchronous, use the one we just waited for
     else
     { // async, have to wait for previous queries to come back:
+      uint64_t prev_value = timeline_value-1;
       VkSemaphoreWaitInfo wait_info = {
         .sType          = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
         .semaphoreCount = 1,
         .pSemaphores    = &graph->semaphore_process,
-        .pValues        = &graph->process_dbuffer[buf_prev],
+        .pValues        = &prev_value,
       };
       QVKR(vkWaitSemaphores(qvk.device, &wait_info, UINT64_MAX));
     }

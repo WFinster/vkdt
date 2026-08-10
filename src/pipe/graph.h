@@ -7,6 +7,7 @@
 
 // create nodes requires roi requires alloc requires upload source
 typedef uint32_t dt_graph_run_t;
+typedef dt_graph_display_images_t dt_graph_display_images_t;
 
 typedef struct dt_connector_image_t
 {
@@ -111,10 +112,9 @@ typedef struct dt_graph_t
   VkCommandPool         command_pool_gfx;
   int                   use_graphics_queue;    // set each run: 1 when s_node_graphics nodes exist and a separate compute family is in use
   VkSemaphore           semaphore_display;   // timeline semaphore to keep track of commands that use the backbuffer images
-  uint64_t              display_dbuffer[2];  // indicate the largest display timeline position currently reading double buffer 0 or 1
   VkSemaphore           semaphore_process;   // timeline semaphore indicating that graph processing/double buffer write access is done
-  uint64_t              process_dbuffer[2];  // timestamps indicating that processing will be done for double buffer 0 or 1
   qvk_queue_name_t      queue_name;
+  dt_graph_display_images_t *dspy;           // used for ui synchronisation, if set. owned by the ui.
 
   VkBuffer              uniform_buffer;      // uniform buffer shared between all nodes
   VkDeviceMemory        vkmem_uniform;

@@ -1,6 +1,7 @@
 #pragma once
 #include "core/colour.h"
 #include "pipe/graph.h"
+#include "pipe/graph-display.h"
 #include "db/thumbnails.h"
 #include "db/db.h"
 #include "db/rc.h"
@@ -198,6 +199,7 @@ typedef struct dt_gui_t
 
   VkResult         graph_res[2];  // result of last run/double pumped
   dt_graph_t       graph_dev;     // processing graph
+  dt_graph_display_images_t dspy; // cross-queue synchronised images for display
 
   dt_db_t          db;            // image list and current query
   dt_thumbnails_t  thumbnails;    // for light table mode

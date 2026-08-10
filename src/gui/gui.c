@@ -687,22 +687,19 @@ dt_gui_win_render(struct nk_context *ctx, dt_gui_win_t *win)
 
   // submit command buffer
   vkCmdEndRenderPass(win->command_buffer[i]);
-  const int len = vkdt.graph_res[vkdt.graph_dev.double_buffer] == VK_SUCCESS ? 2 : 1;
   VkPipelineStageFlags wait_stage[] = { 
     VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT|VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
     VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, };
-  if(len > 1) // we are adding one more command list reading the current double buf
-    vkdt.graph_dev.display_dbuffer[vkdt.graph_dev.double_buffer] = MAX(vkdt.graph_dev.display_dbuffer[0], vkdt.graph_dev.display_dbuffer[1]) + 1;
-  uint64_t value_wait  [] = { 0, vkdt.graph_dev.process_dbuffer[vkdt.graph_dev.double_buffer] };
-  uint64_t value_signal[] = { ++win->frame_global, 0, vkdt.graph_dev.display_dbuffer[vkdt.graph_dev.double_buffer] };
+  uint64_t value_wait  [] = { 0, };
+  uint64_t value_signal[] = { ++win->frame_global, 0, vkdt.dspy.timeline_dspy };
   VkTimelineSemaphoreSubmitInfo timeline_info = {
     .sType                     = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
-    .waitSemaphoreValueCount   = len,
+    .waitSemaphoreValueCount   = 1,
     .pWaitSemaphoreValues      = value_wait,
-    .signalSemaphoreValueCount = len+1,
+    .signalSemaphoreValueCount = 3,
     .pSignalSemaphoreValues    = value_signal,
   };
-  VkSemaphore sem_wait  [] = { image_acquired_semaphore,  vkdt.graph_dev.semaphore_process };
+  VkSemaphore sem_wait  [] = { image_acquired_semaphore };
   VkSemaphore sem_signal[] = { frame_complete_semaphore, render_complete_semaphore, vkdt.graph_dev.semaphore_display };
   VkSubmitInfo submit = {
     .sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO,
@@ -712,7 +709,7 @@ dt_gui_win_render(struct nk_context *ctx, dt_gui_win_t *win)
     .pWaitDstStageMask    = wait_stage,
     .commandBufferCount   = 1,
     .pCommandBuffers      = win->command_buffer+i,
-    .signalSemaphoreCount = len+1,
+    .signalSemaphoreCount = 3,
     .pSignalSemaphores    = sem_signal,
   };
 
@@ -724,6 +721,7 @@ dt_gui_win_render(struct nk_context *ctx, dt_gui_win_t *win)
 
 VkResult dt_gui_render()
 {
+  dt_graph_display_acquire_for_display(&vkdt.dspy); // increment vkdt.dspy.timeline_dspy so dt_image() can pick it up
   dt_gui_render_frame_nk(); // potentially set off commands for both ctx/win
   VkResult r1 = VK_SUCCESS, r0 = VK_SUCCESS;
   if(vkdt.win1.window) r1 = dt_gui_win_render(&vkdt.ctx1, &vkdt.win1);
