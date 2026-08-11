@@ -109,6 +109,7 @@ create_nodes(dt_graph_t *graph, dt_module_t *module, uint64_t *uniform_offset)
   module->uniform_size   = u_size;
 }
 
+#if 0
 static inline void
 init_display_flags(dt_graph_t *graph, dt_module_t *module)
 {
@@ -165,6 +166,7 @@ init_display_flags(dt_graph_t *graph, dt_module_t *module)
     }
   }
 }
+#endif
 
 static inline void
 init_connector_images(dt_graph_t *graph)
@@ -802,9 +804,11 @@ dt_graph_run_modules(
         }
       }
     }
+#if 0
     for(int i=0;i<cnt;i++)
       if(graph->module[modid[i]].connector[0].roi.full_wd > 0)
         init_display_flags(graph, graph->module+modid[i]);
+#endif
     init_connector_images(graph);
   }
   // one last check:

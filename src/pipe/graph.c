@@ -856,8 +856,12 @@ VkResult dt_graph_run(
     graph->timeline_value = get_timeline_value(graph);
     QVKR(vkEndCommandBuffer(cmd_buf));
 
+    // VkPipelineStageFlagBits wait_stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    // uint64_t timeline_prev = MAX(graph->timeline_value, 1)-1; // wait for the other double buffer to finish
     VkTimelineSemaphoreSubmitInfo timeline_info = {
       .sType                     = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
+      // .waitSemaphoreValueCount   = timeline_prev < graph->timeline_value ? 1 : 0,
+      // .pWaitSemaphoreValues      = &timeline_prev,
       .signalSemaphoreValueCount = 1,
       .pSignalSemaphoreValues    = &graph->timeline_value, // signal this buffer is ready to display once we're done
     };
@@ -866,6 +870,9 @@ VkResult dt_graph_run(
       .commandBufferCount   = 1,
       .pCommandBuffers      = &cmd_buf,
       .pNext                = &timeline_info,
+      // .waitSemaphoreCount   = timeline_prev < graph->timeline_value ? 1 : 0,
+      // .pWaitSemaphores      = &graph->semaphore_process,
+      // .pWaitDstStageMask    = &wait_stage,
       .signalSemaphoreCount = 1,
       .pSignalSemaphores    = &graph->semaphore_process,
     };

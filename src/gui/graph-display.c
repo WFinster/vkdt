@@ -169,6 +169,7 @@ dt_graph_display_image_cmd_copy(
   dt_graph_generate_mipmaps(graph, 0, 0, &d->con);
 }
 
+#if 0
 int // return 1 if image with this timeline value is ready for display
 dt_graph_display_image_ready_for_display(
     dt_graph_t *g,
@@ -179,6 +180,7 @@ dt_graph_display_image_ready_for_display(
   if(res != VK_SUCCESS) return 0;
   return val <= value;
 }
+#endif
 
 // do this all the time, potentially not incrementing image timeline values:
 uint64_t 
@@ -222,9 +224,11 @@ dt_graph_display_acquire_for_processing(
     uint64_t tv = dspy->display_image[0][i].val;   // run on main output, the others follow the same logic
     int free = 0;                         // assume still locked
     if(tv <= value_process) free = 1;     // all buffers that finished processing are kinda free
+    if(dspy->timeline_display && tv >= dspy->timeline_display) free = 0; // we anticipate to pick that up in the future!
     if(tv && dt_gui_display_in_use(tv)) free = 0; // this is overly conservative / cpu synced
     if(free && slot >= 0) // already have what we need, locked buffer for display + new buffer for processing. the other one can go:
-      dt_graph_display_image_cleanup(dspy, dspy->display_image[0]+i);
+      for(int k=0;k<s_graph_display_cnt;k++)
+        dt_graph_display_image_cleanup(dspy, &dspy->display_image[k][i]);
     else if(free && slot < 0) slot = i;
   }
 
@@ -291,7 +295,9 @@ dt_graph_display_have_free_process(
     uint64_t tv = dspy->display_image[0][i].val;   // run on main output, the others follow the same logic
     int free = 0;                         // assume still locked
     if(tv <= value_process) free = 1;     // all buffers that finished processing are kinda free
-    if(tv && dt_gui_display_in_use(tv)) free = 0; // this is overly conservative / cpu synced
+    if(dspy->timeline_display && tv >= dspy->timeline_display) free = 0; // we anticipate to pick that up in the future!
+    if(tv && dt_gui_display_in_use(tv))
+      free = 0; // this is overly conservative / cpu synced
     if(free && slot < 0) slot = i;
   }
   if(slot < 0) return 0;
@@ -317,12 +323,18 @@ dt_graph_display_get_dset(
     dt_token("view0"),
     dt_token("view1"),
   };
-  for(int i=0;i<s_graph_display_cnt;i++)
-    if(name == dn[i])
-      for(int k=0;k<3;k++)
-        if(g->dspy->display_image[i][k].val == g->dspy->timeline_display)
-          return g->dspy->display_image[i][k].dset;
-  return (VkDescriptorSet){0};
+  uint64_t tv = 0; // timeline value / frame id. we want to pick the most recent
+  VkDescriptorSet ret = (VkDescriptorSet){0};
+  for(int i=0;i<s_graph_display_cnt;i++) if(name == dn[i]) for(int k=0;k<3;k++)
+  {
+    if((g->dspy->display_image[i][k].val > tv) &&
+       (g->dspy->display_image[i][k].val == g->dspy->timeline_display))
+    {
+      tv  = g->dspy->display_image[i][k].val;
+      ret = g->dspy->display_image[i][k].dset;
+    }
+  }
+  return ret;
 }
 
 VkResult dt_graph_display_images_init(dt_graph_display_images_t *dspy)

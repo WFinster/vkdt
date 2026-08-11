@@ -1036,7 +1036,6 @@ NK_API int nk_glfw3_font_load(
 NK_API void nk_glfw3_input_begin(struct nk_context *ctx, GLFWwindow *w, const int enable_grab)
 {
   nk_input_begin(ctx);
-#if 0 // XXX DEBUG
   if(enable_grab)
   { /* optional grabbing behavior */
     if (ctx->input.mouse.grab)
@@ -1044,7 +1043,6 @@ NK_API void nk_glfw3_input_begin(struct nk_context *ctx, GLFWwindow *w, const in
     else if (ctx->input.mouse.ungrab)
       glfwSetInputMode(w, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
   }
-#endif
 }
 
 NK_API void nk_glfw3_input_end(struct nk_context *ctx, GLFWwindow *w, const int enable_grab)

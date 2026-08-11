@@ -353,7 +353,7 @@ static inline void
 dt_image(
     struct nk_context *ctx,     // this is crucial to run on secondary screen
     dt_image_widget_t *w,
-    dt_node_t         *out,     // make sure the out->dset is valid!
+    dt_node_t         *out,     // output display node
     int                events,  // if !=0 provide zoom/pan interaction
     int                main,    // if !=0 do on-canvas ui elements
     int         center_display) // if !=0 allow mouse events not only on the image but on the full center canvas
