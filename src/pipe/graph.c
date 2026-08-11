@@ -91,7 +91,6 @@ dt_graph_init(dt_graph_t *g, qvk_queue_name_t qname)
     .pNext = &timelineCreateInfo,
     .flags = 0,
   };
-  vkCreateSemaphore(qvk.device, &createInfo, NULL, &g->semaphore_display);
   vkCreateSemaphore(qvk.device, &createInfo, NULL, &g->semaphore_process);
   for(int i=0;i<2;i++)
   {
@@ -238,9 +237,7 @@ dt_graph_cleanup(dt_graph_t *g)
   vkFreeMemory(qvk.device, g->vkmem_uniform, 0);
   g->vkmem_uniform = 0;
   g->vkmem_uniform_size = 0;
-  vkDestroySemaphore(qvk.device, g->semaphore_display, 0);
   vkDestroySemaphore(qvk.device, g->semaphore_process, 0);
-  g->semaphore_display = 0;
   g->semaphore_process = 0;
   if(g->command_pool != VK_NULL_HANDLE)
     vkFreeCommandBuffers(qvk.device, g->command_pool, 2, g->command_buffer);
