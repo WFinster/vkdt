@@ -119,14 +119,15 @@ dt_graph_run_nodes_upload(
               {
                 dt_connector_image_t *img = dt_graph_connector_image(graph, node-graph->node, c, a, graph->double_buffer);
                 vkUnmapMemory(qvk.device, node->connector[c].mem_staging->memory->vkmem);
-                if(!img || !img->image)
-                  continue;
                 const uint32_t wd = MAX(1, node->connector[c].array_dim ? node->connector[c].array_dim[2*a+0] : node->connector[c].roi.wd);
                 const uint32_t ht = MAX(1, node->connector[c].array_dim ? node->connector[c].array_dim[2*a+1] : node->connector[c].roi.ht);
-                // read_source triggered another texture request? (quake) now we would write garbage..
-                // TODO double buffer the requests..
-                if(img->wd < wd || img->ht < ht)
+                if(!img || !img->image || img->wd < wd || img->ht < ht)
+                {
+                  // TODO destroy/allocate image inline! use separate VkMemoryAllocation, we can't alias this anyways
+                  // TODO remove all the image + mem alloc + dset complexity from graph-run-nodes-allocate
                   continue;
+                  // read_source triggered another texture request? (quake) now we would write garbage..
+                }
                 VkBufferImageCopy regions[] = {{
                   .imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
                   .imageSubresource.layerCount = 1,
