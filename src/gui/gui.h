@@ -15,7 +15,7 @@
 #include <GLFW/glfw3.h>
 
 // max images in flight in vulkan pipeline/swap chain
-#define DT_GUI_MAX_IMAGES 2
+#define DT_GUI_MAX_IMAGES QVK_MAX_SWAPCHAIN_IMAGES
 #define NK_UPDATE_ACTIVE do {if(vkdt.ctx.current && (vkdt.ctx.current->property.active || vkdt.ctx.current->edit.active)) vkdt.wstate.nk_active_next = 1;} while(0)
 
 // view modes, lighttable, darkroom, ..
