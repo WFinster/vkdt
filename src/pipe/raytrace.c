@@ -44,7 +44,7 @@ dt_raytrace_graph_cleanup(
   if(graph->rt.buf_accel)        vkDestroyBuffer(qvk.device, graph->rt.buf_accel,   VK_NULL_HANDLE);
   if(graph->rt.buf_scratch)      vkDestroyBuffer(qvk.device, graph->rt.buf_scratch, VK_NULL_HANDLE);
   if(graph->rt.buf_staging)      vkDestroyBuffer(qvk.device, graph->rt.buf_staging, VK_NULL_HANDLE);
-  if(graph->rt.buf_bref)         vkDestroyBuffer(qvk.device, graph->rt.buf_bref, VK_NULL_HANDLE);
+  if(graph->rt.buf_bref)         vkDestroyBuffer(qvk.device, graph->rt.buf_bref,    VK_NULL_HANDLE);
   if(graph->rt.buf_staging_bref) vkDestroyBuffer(qvk.device, graph->rt.buf_staging_bref, VK_NULL_HANDLE);
   if(graph->rt.vkmem_scratch)    vkFreeMemory   (qvk.device, graph->rt.vkmem_scratch, 0);
   if(graph->rt.vkmem_staging)    vkFreeMemory   (qvk.device, graph->rt.vkmem_staging, 0);
@@ -206,7 +206,7 @@ dt_raytrace_graph_init(
   },{
     .binding         = 1,
     .descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-    .descriptorCount = graph->rt.nid_cnt,
+    .descriptorCount = 1,
     .stageFlags      = VK_SHADER_STAGE_ALL,
   }};
   VkDescriptorSetLayoutCreateInfo dset_layout_info = {
@@ -403,7 +403,7 @@ dt_raytrace_graph_alloc(
     .dstSet          = graph->rt.dset[1],
     .dstBinding      = 1,
   }};
-  vkUpdateDescriptorSets(qvk.device, 4, dset_write, 0, NULL);
+  vkUpdateDescriptorSets(qvk.device, 4, dset_write, 0, 0);
   return VK_SUCCESS;
 }
 #undef CREATE_SCRATCH_BUF_R

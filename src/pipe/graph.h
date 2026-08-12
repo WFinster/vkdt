@@ -116,6 +116,9 @@ typedef struct dt_graph_t
   dt_graph_display_images_t *dspy;           // used for ui synchronisation, if set. owned by the ui.
   uint64_t (*dspy_acquire)(dt_graph_t *g);   // callback to get new frame id/semaphore value
   uint64_t              timeline_value;      // value of last submitted timeval semaphore (have to wait for this to finish before cleanup)
+  VkCommandBuffer       tmp_cmd;             // "temporary" command buffer for occasional cpu synced buffer uploads
+  VkCommandPool         tmp_cmd_pool;
+  VkSemaphore           tmp_sem;
 
   VkBuffer              uniform_buffer;      // uniform buffer shared between all nodes
   VkDeviceMemory        vkmem_uniform;

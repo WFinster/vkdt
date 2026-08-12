@@ -248,6 +248,7 @@ write_descriptor_sets(
         if(!img->image_view) // for dynamic arrays maybe a lazy programmer left empty slots? set to tex 0:
           img = dt_graph_connector_image(graph,
               node - graph->node, c - node->connector, 0, graph->double_buffer);
+        if(!img->image_view) return VK_SUCCESS; // ouch
         img_info[k] = (VkDescriptorImageInfo){
           .sampler = 
             (c->format == dt_token("yuv")) ? 0 : // needs immutable sampler

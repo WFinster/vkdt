@@ -931,7 +931,6 @@ int read_source(
     // fprintf(stderr, "quake read source tex %d connector length %d\n", p->a, p->node->connector[0].array_length);
     memcpy(mapped, d->tex[p->a], sizeof(uint32_t)*d->tex_dim[2*p->a]*d->tex_dim[2*p->a+1]);
     p->node->flags &= ~s_module_request_read_source; // done uploading textures
-    d->tex_req[p->a] = 0;
   }
   uint32_t tri_cnt = 0;
   geo_tri_t *tri = mapped;

@@ -7,6 +7,51 @@
   img->layout = nl;\
 } while(0)
 
+// random vk helpers:
+static inline VkResult
+dt_cmd_sync_exec_beg(
+    VkCommandBuffer cmd)
+{
+  VkCommandBufferBeginInfo begin_info = {
+    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+    .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+  };
+  return vkBeginCommandBuffer(cmd, &begin_info);
+}
+
+static inline VkResult
+dt_cmd_sync_exec_end(
+    VkCommandBuffer cmd,
+    VkSemaphore     sem)
+{
+  QVKR(vkEndCommandBuffer(cmd));
+  uint64_t signal_values[1];
+  QVKR(vkGetSemaphoreCounterValue(qvk.device, sem, signal_values));
+  signal_values[0]++; // wait for one more, sync inline
+  VkTimelineSemaphoreSubmitInfo timeline_info = {
+    .sType                     = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
+    .signalSemaphoreValueCount = 1,
+    .pSignalSemaphoreValues    = signal_values,
+  };
+  VkSubmitInfo submit = {
+    .sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+    .commandBufferCount   = 1,
+    .pCommandBuffers      = &cmd,
+    .pNext                = &timeline_info,
+    .signalSemaphoreCount = 1,
+    .pSignalSemaphores    = &sem,
+  };
+  QVKLR(&qvk.queue[qvk.qid[s_queue_compute]].mutex,
+      vkQueueSubmit(qvk.queue[qvk.qid[s_queue_compute]].queue, 1, &submit, 0));
+  VkSemaphoreWaitInfo wait_info = {
+    .sType          = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
+    .semaphoreCount = 1,
+    .pSemaphores    = &sem,
+    .pValues        = signal_values,
+  };
+  return vkWaitSemaphores(qvk.device, &wait_info, UINT64_MAX);
+}
+
 // upload source to GPU buffers portion.
 // the logic when an upload is triggered follow several steps:
 // - the module requested upload as a whole, via module->flags & s_module_request_read_source
@@ -28,11 +73,6 @@ dt_graph_run_nodes_upload(
     dt_module_flags_t    module_flags,  // or-ed mask of module flags collected over all *nodes*
     int                  dynamic_array)
 {
-  VkCommandBufferBeginInfo begin_info = {
-    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-    .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-  };
-
   if( dynamic_array ||
      (module_flags & s_module_request_read_source) ||
      (run & s_graph_run_upload_source))
@@ -78,14 +118,15 @@ dt_graph_run_nodes_upload(
               if(node->connector[c].array_length > 1)
               {
                 dt_connector_image_t *img = dt_graph_connector_image(graph, node-graph->node, c, a, graph->double_buffer);
-                if(!img) {
-                  vkUnmapMemory(qvk.device, node->connector[c].mem_staging->memory->vkmem);
-                  continue;
-                }
-                // fprintf(stderr, "upload %d[%d] off %lx size %lx\n", a, graph->double_buffer, img->offset, img->size);
                 vkUnmapMemory(qvk.device, node->connector[c].mem_staging->memory->vkmem);
+                if(!img || !img->image)
+                  continue;
                 const uint32_t wd = MAX(1, node->connector[c].array_dim ? node->connector[c].array_dim[2*a+0] : node->connector[c].roi.wd);
                 const uint32_t ht = MAX(1, node->connector[c].array_dim ? node->connector[c].array_dim[2*a+1] : node->connector[c].roi.ht);
+                // read_source triggered another texture request? (quake) now we would write garbage..
+                // TODO double buffer the requests..
+                if(img->wd < wd || img->ht < ht)
+                  continue;
                 VkBufferImageCopy regions[] = {{
                   .imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
                   .imageSubresource.layerCount = 1,
@@ -101,8 +142,8 @@ dt_graph_run_nodes_upload(
                   .imageExtent = { wd / 2, ht / 2, 1 },
                 }};
                 const int yuv = node->connector[c].format == dt_token("yuv");
-                VkCommandBuffer cmd_buf = graph->command_buffer[graph->double_buffer];
-                QVKR(vkBeginCommandBuffer(cmd_buf, &begin_info));
+                VkCommandBuffer cmd_buf = graph->tmp_cmd;
+                QVKR(dt_cmd_sync_exec_beg(graph->tmp_cmd));
                 IMG_LAYOUT(img, UNDEFINED, GENERAL);
                 vkCmdCopyBufferToImage(
                     cmd_buf,
@@ -110,37 +151,7 @@ dt_graph_run_nodes_upload(
                     img->image,
                     VK_IMAGE_LAYOUT_GENERAL,
                     yuv ? 2 : 1, yuv ? regions+1 : regions);
-                IMG_LAYOUT(img, GENERAL, GENERAL);
-                QVKR(vkEndCommandBuffer(cmd_buf));
-
-                // XXX TODO use separate semaphore only for here. we'll wait for it in cpu anyways
-
-                // we add one more command list, locking the command buffer in this case
-                uint64_t timeline = 0; // XXX init that with semaphore on the outside
-                timeline ++;
-                VkTimelineSemaphoreSubmitInfo timeline_info = {
-                  .sType                     = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
-                  .signalSemaphoreValueCount = 1,
-                  .pSignalSemaphoreValues    = &timeline, // lock for writing, this signal will remove the lock
-                };
-                VkSubmitInfo submit = {
-                  .sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-                  .commandBufferCount   = 1,
-                  .pCommandBuffers      = &cmd_buf,
-                  .pNext                = &timeline_info,
-                  .signalSemaphoreCount = 1,
-                  .pSignalSemaphores    = &graph->semaphore_process, // XXX other sem!!
-                };
-                QVKLR(&qvk.queue[qvk.qid[graph->queue_name]].mutex,
-                    vkQueueSubmit(qvk.queue[qvk.qid[graph->queue_name]].queue, 1, &submit, 0));
-                VkSemaphoreWaitInfo wait_info = {
-                  .sType          = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
-                  .semaphoreCount = 1,
-                  .pSemaphores    = &graph->semaphore_process, // XXX different one!
-                  .pValues        = &timeline,
-                };
-                // wait inline on our semaphore because we share the staging buf
-                QVKR(vkWaitSemaphores(qvk.device, &wait_info, UINT64_MAX));
+                QVKR(dt_cmd_sync_exec_end(graph->tmp_cmd, graph->tmp_sem));
               } else {
                 vkUnmapMemory(qvk.device, node->connector[c].mem_staging->memory->vkmem);
               }

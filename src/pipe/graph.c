@@ -92,6 +92,32 @@ dt_graph_init(dt_graph_t *g, qvk_queue_name_t qname)
     .flags = 0,
   };
   vkCreateSemaphore(qvk.device, &createInfo, NULL, &g->semaphore_process);
+  
+  { // init temporary command buffer
+    VkCommandPoolCreateInfo create_pool = {
+      .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+      .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT | VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+      .queueFamilyIndex = qvk.queue[s_queue_compute].family,
+    };
+    QVK(vkCreateCommandPool(qvk.device, &create_pool, 0, &g->tmp_cmd_pool));
+    VkCommandBufferAllocateInfo cmd_alloc = {
+      .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+      .commandPool = g->tmp_cmd_pool,
+      .commandBufferCount = 1,
+    };
+    QVK(vkAllocateCommandBuffers(qvk.device, &cmd_alloc, &g->tmp_cmd));
+    VkSemaphoreTypeCreateInfoKHR type_sem = {
+      .sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO_KHR,
+      .semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE_KHR,
+      .initialValue  = 0,
+    };
+    VkSemaphoreCreateInfo create_sem = {
+      .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+      .pNext = &type_sem
+    };
+    QVK(vkCreateSemaphore(qvk.device, &create_sem, 0, &g->tmp_sem));
+  }
+
   for(int i=0;i<2;i++)
   {
     g->query[i].max = 2000;
@@ -251,6 +277,14 @@ dt_graph_cleanup(dt_graph_t *g)
     vkDestroyCommandPool(qvk.device, g->command_pool_gfx, 0);
     g->command_pool_gfx = 0;
   }
+
+  vkDestroySemaphore  (qvk.device, g->tmp_sem, 0);
+  vkFreeCommandBuffers(qvk.device, g->tmp_cmd_pool, 1, &g->tmp_cmd);
+  vkDestroyCommandPool(qvk.device, g->tmp_cmd_pool, 0);
+  g->tmp_sem = 0;
+  g->tmp_cmd = 0;
+  g->tmp_cmd_pool = 0;
+
   free(g->module);             g->module = 0;
   free(g->node);               g->node = 0;
   free(g->params_pool);        g->params_pool = 0;
@@ -810,6 +844,8 @@ VkResult dt_graph_run(
     QVKR(dt_graph_run_nodes_allocate(graph, &run, nodeid, cnt, &dynamic_array));
 
     // upload all source data to staging memory
+    // XXX FIXME: this calls quake -> read_source -> loads model extra data -> loads QS_texture_load
+    // XXX invalidates texture!
     QVKR(dt_graph_run_nodes_upload(graph, run, nodeid, cnt, module_flags, dynamic_array));
 
     // now upload uniform data before submitting the command buffer. this runs
