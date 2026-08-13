@@ -4,6 +4,10 @@ this module allows you to crop and rotate an image. it also features a
 perspective correction button, which will let you pick a quad on the image and
 make these lines parallel after application.
 
+`auto crop` removes rotation or perspective rims.
+aspect is width/height: positive fixes it, `0` maximises area, and `-1` uses the
+original image aspect. it leaves up to a two-pixel resampling margin.
+
 # parameters
 
 * `perspect` the quad used for perspective correction

@@ -2,173 +2,224 @@
 #include "core/gaussian_elimination.h"
 
 #include <math.h>
-#include <float.h>
 
-static inline int
-processed_point_outside(
-    const int    wd, // input roi
-    const int    ht,
-    const float *T,
-    const float *H,
-    const float *crop,
-    const float *x) // position in pixels
+#define CROP_NUM_HP 9
+
+// safe output region as half planes hp[i] * (x, y, 1) <= 0.
+static inline void
+get_half_planes(
+    const int     wd,
+    const int     ht,
+    const float  *T,
+    const float  *H,
+    const double  inset,
+    double        hp[CROP_NUM_HP][3])
 {
-  float xy[2] = { x[0], x[1] };
-  xy[0] -= wd/2.0;
-  xy[1] -= ht/2.0;
-  float tmp[3] = {0.0f};
-  for(int i=0;i<2;i++)
-    for(int j=0;j<2;j++)
-      tmp[i] += T[2*j+i] * xy[j];
-  tmp[0] += wd/2.0;
-  tmp[1] += ht/2.0;
-  tmp[2] = 1.0f;
-  float tmp2[3] = {0.0f};
+  const double cx = wd/2.0, cy = ht/2.0;
+  const double A[6] = {
+    T[0], T[2], cx - (T[0]*cx + T[2]*cy),
+    T[1], T[3], cy - (T[1]*cx + T[3]*cy) };
+  const double R[3][3] = {
+    { H[0], H[4], H[ 8] },
+    { H[1], H[5], H[ 9] },
+    { H[2], H[6], H[10] } };
+  double Q[3][3];
   for(int i=0;i<3;i++)
-    for(int j=0;j<3;j++)
-      tmp2[i] += H[4*j+i] * tmp[j];
-  tmp2[0] /= tmp2[2];
-  tmp2[1] /= tmp2[2];
-
-  if(tmp2[0] >= wd) return 1;
-  if(tmp2[1] >= ht) return 1;
-  if(tmp2[0] < 0)   return 1;
-  if(tmp2[1] < 0)   return 1;
-  return 0;
+  {
+    Q[i][0] = R[i][0]*A[0] + R[i][1]*A[3];
+    Q[i][1] = R[i][0]*A[1] + R[i][1]*A[4];
+    Q[i][2] = R[i][0]*A[2] + R[i][1]*A[5] + R[i][2];
+  }
+  const double w = Q[2][0]*cx + Q[2][1]*cy + Q[2][2];
+  if(w < 0.0) for(int i=0;i<3;i++) for(int k=0;k<3;k++) Q[i][k] = -Q[i][k];
+  for(int k=0;k<3;k++)
+  {
+    hp[0][k] = -Q[0][k] +       inset  * Q[2][k];
+    hp[1][k] =  Q[0][k] - (wd - inset) * Q[2][k];
+    hp[2][k] = -Q[1][k] +       inset  * Q[2][k];
+    hp[3][k] =  Q[1][k] - (ht - inset) * Q[2][k];
+    hp[4][k] = -Q[2][k];
+  }
+  hp[4][2] += 1e-3 * fabs(w);
+  const double K = MAX(wd, ht);
+  hp[5][0] = -1; hp[5][1] =  0; hp[5][2] = -K;
+  hp[6][0] =  1; hp[6][1] =  0; hp[6][2] = -(wd + K);
+  hp[7][0] =  0; hp[7][1] = -1; hp[7][2] = -K;
+  hp[8][0] =  0; hp[8][1] =  1; hp[8][2] = -(ht + K);
+  for(int i=0;i<CROP_NUM_HP;i++)
+  {
+    const double n = hypot(hp[i][0], hp[i][1]);
+    const double s = n > 0.0 ? 1.0/n : (hp[i][2] != 0.0 ? 1.0/fabs(hp[i][2]) : 1.0);
+    for(int k=0;k<3;k++) hp[i][k] *= s;
+  }
 }
 
-static inline float
-line_search(
-    const int    wd,  // input roi
-    const int    ht,
-    const float *T,
-    const float *H,
-    const float *crop,
-    const float *x,   // point in pixel coordinates, on the inside
-    const float *y)   // the other point where to aim at (but don't go farther)
-{ // ray trace from the inside until intersection with the boundary, return point that is still inside
-  float m = 0.0f, M = 1.0f;
-  if(!processed_point_outside(wd, ht, T, H, crop, y)) return 1.0f; // early out
-  for(int it=0;it<10;it++)
-  { // binary search for a bit
-    float t = (M+m)/2.0f;
-    float z[2];
-    for(int k=0;k<2;k++) z[k] = (1.0f-t)*x[k] + t*y[k];
-    if(processed_point_outside(wd, ht, T, H, crop, z))
-      M = t;
-    else
-      m = t;
+static inline int
+get_bounds(const double hp[CROP_NUM_HP][3], double *aabb)
+{
+  aabb[0] = aabb[1] = INFINITY;
+  aabb[2] = aabb[3] = -INFINITY;
+  for(int i=0;i<CROP_NUM_HP;i++) for(int j=i+1;j<CROP_NUM_HP;j++)
+  {
+    const double det = hp[i][0]*hp[j][1] - hp[i][1]*hp[j][0];
+    const double scale = hypot(hp[i][0], hp[i][1]) * hypot(hp[j][0], hp[j][1]);
+    if(fabs(det) <= 1e-12 * scale) continue;
+    const double x = (hp[i][1]*hp[j][2] - hp[i][2]*hp[j][1])/det;
+    const double y = (hp[i][2]*hp[j][0] - hp[i][0]*hp[j][2])/det;
+    int inside = 1;
+    for(int k=0;k<CROP_NUM_HP;k++)
+      if(hp[k][0]*x + hp[k][1]*y + hp[k][2] > 1e-6) { inside = 0; break; }
+    if(!inside) continue;
+    aabb[0] = MIN(aabb[0], x); aabb[1] = MIN(aabb[1], y);
+    aabb[2] = MAX(aabb[2], x); aabb[3] = MAX(aabb[3], y);
   }
-  return m; // be conservative, return the inside distance
+  return isfinite(aabb[0]) && isfinite(aabb[1]) &&
+    isfinite(aabb[2]) && isfinite(aabb[3]) && aabb[2] > aabb[0] && aabb[3] > aabb[1];
+}
+
+static inline int
+fits(const double row[CROP_NUM_HP][3], const double hp[CROP_NUM_HP][3],
+     const double s, const double cx, const double cy)
+{
+  for(int n=0;n<CROP_NUM_HP;n++)
+    if(row[n][0]*cx + row[n][1]*cy + row[n][2]*s + hp[n][2] > 1e-6) return 0;
+  return 1;
+}
+
+static inline void
+nearest(const double row[CROP_NUM_HP][3], const double hp[CROP_NUM_HP][3],
+        const double s, const double *target, double *cx, double *cy)
+{
+  if(fits(row, hp, s, target[0], target[1])) { *cx = target[0]; *cy = target[1]; return; }
+  double best = (*cx-target[0])*(*cx-target[0]) + (*cy-target[1])*(*cy-target[1]);
+  for(int i=0;i<CROP_NUM_HP;i++)
+  {
+    const double g2 = row[i][0]*row[i][0] + row[i][1]*row[i][1];
+    if(g2 < 1e-12) continue;
+    const double r = row[i][0]*target[0] + row[i][1]*target[1] + row[i][2]*s + hp[i][2];
+    const double x = target[0] - row[i][0]*r/g2, y = target[1] - row[i][1]*r/g2;
+    const double d = (x-target[0])*(x-target[0]) + (y-target[1])*(y-target[1]);
+    if(d < best && fits(row, hp, s, x, y)) { best = d; *cx = x; *cy = y; }
+  }
+  for(int i=0;i<CROP_NUM_HP;i++) for(int j=i+1;j<CROP_NUM_HP;j++)
+  {
+    const double det = row[i][0]*row[j][1] - row[i][1]*row[j][0];
+    if(fabs(det) < 1e-9) continue;
+    const double ri = -(row[i][2]*s + hp[i][2]), rj = -(row[j][2]*s + hp[j][2]);
+    const double x = (ri*row[j][1] - row[i][1]*rj)/det;
+    const double y = (row[i][0]*rj - ri*row[j][0])/det;
+    const double d = (x-target[0])*(x-target[0]) + (y-target[1])*(y-target[1]);
+    if(d < best && fits(row, hp, s, x, y)) { best = d; *cx = x; *cy = y; }
+  }
+}
+
+static inline double
+inscribe(
+    const double  hp[CROP_NUM_HP][3],
+    const double  aw,
+    const double  ah,
+    const double *target,
+    double       *aabb)
+{
+  double best = 0.0, bcx = 0.0, bcy = 0.0;
+  double row[CROP_NUM_HP][3];
+  for(int i=0;i<CROP_NUM_HP;i++)
+  {
+    row[i][0] = hp[i][0];
+    row[i][1] = hp[i][1];
+    row[i][2] = 0.5*(fabs(hp[i][0])*aw + fabs(hp[i][1])*ah);
+  }
+  for(int i=0;i<CROP_NUM_HP;i++) for(int j=i+1;j<CROP_NUM_HP;j++) for(int k=j+1;k<CROP_NUM_HP;k++)
+  {
+    const double *a = row[i], *b = row[j], *c = row[k];
+    const double det =
+      a[0]*(b[1]*c[2] - b[2]*c[1]) -
+      a[1]*(b[0]*c[2] - b[2]*c[0]) +
+      a[2]*(b[0]*c[1] - b[1]*c[0]);
+    const double scale = hypot(a[0], hypot(a[1], a[2])) *
+      hypot(b[0], hypot(b[1], b[2])) * hypot(c[0], hypot(c[1], c[2]));
+    if(fabs(det) <= 1e-12 * scale) continue;
+    double A[9] = {a[0],a[1],a[2], b[0],b[1],b[2], c[0],c[1],c[2]};
+    double x[3] = {-hp[i][2], -hp[j][2], -hp[k][2]};
+    if(!gauss_solve(A, x, 3)) continue;
+    if(!(x[2] > best)) continue;
+    if(!fits(row, hp, x[2], x[0], x[1])) continue;
+    best = x[2]; bcx = x[0]; bcy = x[1];
+  }
+  if(best <= 0.0) return 0.0;
+  if(target) nearest(row, hp, best, target, &bcx, &bcy);
+  aabb[0] = bcx - 0.5*best*aw;
+  aabb[1] = bcy - 0.5*best*ah;
+  aabb[2] = bcx + 0.5*best*aw;
+  aabb[3] = bcy + 0.5*best*ah;
+  return best;
 }
 
 void ui_callback(
     dt_module_t *module,
-    dt_token_t   param)
-{ // auto-crop away black borders
-  // really this code is shit. it can fail and it is hardly ever optimal.
-  // there are a couple of publications on finding the maximum inscribed axis aligned rectangle
-  // of a convex polygon, but starting from a (sorted) list of vertices adn sounds like too much trouble.
+    dt_token_t   param,
+    float        aspect)
+{
   const int wd = module->connector[0].roi.wd;
   const int ht = module->connector[0].roi.ht;
-  float H[16], T[4], crop[4] = {0, 1, 0, 1};
+  float H[16], T[4];
   float *f = (float*)module->committed_param;
-  for(int k=0;k<12;k++) H[k] = f[k];   // perspective matrix H
+  for(int k=0;k<12;k++) H[k] = f[k];
   f += 12;
-  for(int k=0;k<4;k++) T[k] = f[k];    // rotation matrix T
+  for(int k=0;k<4;k++) T[k] = f[k];
 
-  float A_max = 0.0f, aabb_max[4];
-  // 1) ray trace to obtain a list of <= 12 vertices
-  float center[2] = {wd/2.0, ht/2.0};
-  float aabb[] = {FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX}; // xmin ymin xmax ymax
-  float edgep[4][2]; // xmin ymin xmax ymax
-  for(int e=0;e<4;e++)
-  { // trace 4-star outside to find coarse aabb
-    const float dir[4][2] = {{-1,0},{0,-1},{1,0},{0,1}};
-    float y[] = {
-      2.0*wd*dir[e][0] + center[0],
-      2.0*wd*dir[e][1] + center[1]};
-    float t = line_search(wd, ht, T, H, crop, center, y);
-    edgep[e][0] = center[0] + t*2.0*wd*dir[e][0];
-    edgep[e][1] = center[1] + t*2.0*wd*dir[e][1];
-    aabb[0] = MIN(edgep[e][0], aabb[0]);
-    aabb[1] = MIN(edgep[e][1], aabb[1]);
-    aabb[2] = MAX(edgep[e][0], aabb[2]);
-    aabb[3] = MAX(edgep[e][1], aabb[3]);
-  }
-  int all_good = 1;
-  for(int c=0;c<4;c++)
-  { // check if all four corners are inside and if so return this immediately (fast path for axis aligned orientation flips)
-    float y[] = { aabb[2*(c&1)], aabb[1+(c&2)] };
-    if(processed_point_outside(wd, ht, T, H, crop, y)) all_good = 0;
-  }
-  if(all_good)
-  {
-    memcpy(aabb_max, aabb, sizeof(aabb_max));
-    goto out;
-  }
-  float xy[4][12][2], xyc[4][3][2];
-  int nxy[4] = {0}, nxyc[4] = {0};
-  for(int c=0;c<4;c++)
-  { // trace 3 rays towards corners of this aabb (from two edges + center)
-    float y[] = { aabb[2*(c&1)], aabb[1+(c&2)] }; // trace towards corner c
-    int xl = (c&1) ? 2 : 0, yl = (c&2) ? 3 : 1;
-    for(int k=0;k<3;k++)
-    { // record results in the lists to be considered for xmax/min and ymax/min:
-      float *x = k == 0 ? center : (k == 1 ? edgep[xl] : edgep[yl]);
-      float t = line_search(wd, ht, T, H, crop, x, y);
-      int i = nxy[xl]++, j = nxy[yl]++, l = nxyc[c]++;
-      xyc[c][l][0] = xy[yl][j][0] = xy[xl][i][0] = (1.0f - t) * x[0] + t * y[0];
-      xyc[c][l][1] = xy[yl][j][1] = xy[xl][i][1] = (1.0f - t) * x[1] + t * y[1];
-    }
-  }
+  double hp[CROP_NUM_HP][3];
+  get_half_planes(wd, ht, T, H, MIN(wd, ht) > 400 ? 2.0 : 0.0, hp);
 
-  // 2) pick one of the <=12 as starting vertex
-  for(int c=0;c<4;c++) for(int k=0;k<nxyc[c];k++)
-  { // select fixed corner for first two aabb dimensions
-    const int xm = c&1, ym = (c&2)>>1; // xmin(0) or max(1), ymin(0) or max(1)
-    float aabb[4];
-    aabb[0+2*xm] = xyc[c][k][0];
-    aabb[1+2*ym] = xyc[c][k][1];
-    for(int i=0;i<nxy[2*(1-xm)];i++)
-    { // find other x coordinate
-      float x = xy[2*(1-xm)][i][0], y = xy[2*(1-xm)][i][1];
-      if( xm && x >= aabb[2]) continue; // candidate x is on the wrong side of what we already have
-      if(!xm && x <= aabb[0]) continue;
-      if( ym && y <= aabb[3]) continue; // y needs to be outside
-      if(!ym && y >= aabb[1]) continue;
-      aabb[2*(1-xm)] = x;
-      for(int j=0;j<nxy[1+2*(1-ym)];j++)
-      { // find last y coordinate
-        float x = xy[1+2*(1-ym)][j][0], y = xy[1+2*(1-ym)][j][1];
-        if(x >= aabb[0] && x <= aabb[2]) continue; // x needs to be outside
-        if( ym && y >= aabb[3]) continue;
-        if(!ym && y <= aabb[1]) continue;
-        aabb[1+2*(1-ym)] = y;
-        int cc = 0;
-          for(;cc<4;cc++)
-          {
-            float y[] = { aabb[2*(cc&1)], aabb[1+(cc&2)] };
-            if(processed_point_outside(wd, ht, T, H, crop, y)) break;
-          }
-          if(cc < 4) continue;
-        float A = (aabb[2]-aabb[0])*(aabb[3]-aabb[1]);
-        if(A > A_max)
-        {
-          A_max = A;
-          memcpy(aabb_max, aabb, sizeof(aabb_max));
-        }
-      }
-    }
-  }
-  // fallback if all else failed:
-  if(A_max <= 0.0f) memcpy(aabb, aabb_max, sizeof(aabb_max));
-out:;
   float *p_crop = (float *)dt_module_param_float(module, 1);
-  p_crop[0] = 1.01 * aabb_max[0] / wd;
-  p_crop[1] = 0.99 * aabb_max[2] / wd;
-  p_crop[2] = 1.01 * aabb_max[1] / ht;
-  p_crop[3] = 0.99 * aabb_max[3] / ht;
+  double target[2] = { wd/2.0, ht/2.0 };
+  if(!(p_crop[0] == 1.0f && p_crop[1] == 3.0f && p_crop[2] == 3.0f && p_crop[3] == 7.0f))
+  {
+    target[0] = 0.5*(p_crop[0] + p_crop[1]) * wd;
+    target[1] = 0.5*(p_crop[2] + p_crop[3]) * ht;
+  }
+
+  double aabb[4];
+  if(aspect > 0.0f)
+  {
+    if(inscribe(hp, aspect, 1.0, target, aabb) <= 0.0) return;
+  }
+  else
+  {
+    double box[4], square[4];
+    const double side = inscribe(hp, 1.0, 1.0, 0, square);
+    if(side <= 0.0 || !get_bounds(hp, box)) return;
+    const double floor = side*side;
+    const double lo = log(floor/((box[3]-box[1])*(box[3]-box[1])));
+    const double hi = log((box[2]-box[0])*(box[2]-box[0])/floor);
+    if(!isfinite(lo) || !isfinite(hi) || hi < lo) return;
+    const double g = 0.6180339887498949;
+    const int steps = MAX(256, (int)ceil(32.0*(hi-lo)));
+    double best = -1.0, t = 0.0, tmp[4];
+    for(int i=0;i<=steps;i++)
+    {
+      const double ti = lo + (hi-lo)*i/steps, a = exp(ti), s = inscribe(hp, a, 1.0, 0, tmp);
+      if(s*s*a > best) { best = s*s*a; t = ti; }
+    }
+    if(best <= 0.0) return;
+    double m = MAX(lo, t - (hi-lo)/steps), M = MIN(hi, t + (hi-lo)/steps);
+    double t0 = M - g*(M-m), t1 = m + g*(M-m), a0 = exp(t0), a1 = exp(t1);
+    double s0 = inscribe(hp, a0, 1.0, 0, tmp), f0 = s0*s0*a0;
+    double s1 = inscribe(hp, a1, 1.0, 0, tmp), f1 = s1*s1*a1;
+    for(int it=0;it<48;it++)
+    {
+      if(f0 > f1) { M = t1; t1 = t0; f1 = f0; t0 = M - g*(M-m); a0 = exp(t0);
+                    s0 = inscribe(hp, a0, 1.0, 0, tmp); f0 = s0*s0*a0; }
+      else        { m = t0; t0 = t1; f0 = f1; t1 = m + g*(M-m); a1 = exp(t1);
+                    s1 = inscribe(hp, a1, 1.0, 0, tmp); f1 = s1*s1*a1; }
+    }
+    if(inscribe(hp, exp(0.5*(m+M)), 1.0, target, aabb) <= 0.0) return;
+  }
+
+  p_crop[0] = aabb[0] / wd;
+  p_crop[1] = aabb[2] / wd;
+  p_crop[2] = aabb[1] / ht;
+  p_crop[3] = aabb[3] / ht;
 }
 
 // fill crop and rotation if auto-rotate by exif data has been requested

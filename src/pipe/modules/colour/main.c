@@ -31,7 +31,8 @@ auto_temp_kelvin(const float position, const uint32_t nbands)
 
 void ui_callback(
     dt_module_t *mod,
-    dt_token_t   param)
+    dt_token_t   param,
+    float        arg)
 { // callback for import from cc24/colour picker button:
   // retrieve instance token from our params and corresponding colour picker by that instance name:
   const int   parid   = dt_module_get_param(mod->so, param);

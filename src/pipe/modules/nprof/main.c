@@ -21,7 +21,8 @@ void modify_roi_in(
 
 void ui_callback(
     dt_module_t *module,
-    dt_token_t   param)
+    dt_token_t   param,
+    float        arg)
 {
   static char msg[128];
   char filename[512];

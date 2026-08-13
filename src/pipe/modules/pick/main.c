@@ -5,7 +5,8 @@
 
 void ui_callback(
     dt_module_t *mod,
-    dt_token_t   param)
+    dt_token_t   param,
+    float        arg)
 { // button to create static counterpart has been clicked
   dt_graph_t *g = mod->graph;
   int modid = dt_module_add_with_history(g, dt_token("const"), mod->inst);

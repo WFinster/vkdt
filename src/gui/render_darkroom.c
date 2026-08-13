@@ -1007,7 +1007,7 @@ static void darkroom_menu_action(const char *action)
       if(modid >= 0)
       {
         dt_module_t *m = vkdt.graph_dev.module + modid;
-        if(m->so->ui_callback) m->so->ui_callback(m, param);
+        if(m->so->ui_callback) m->so->ui_callback(m, param, 0.0f);
         vkdt.graph_dev.runflags |= s_graph_run_record_cmd_buf;
         vkdt.graph_dev.active_module = modid;
         dt_graph_history_append(&vkdt.graph_dev, modid, -1, 0);
