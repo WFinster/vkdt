@@ -11,6 +11,11 @@ VKDT_JPEG_CFLAGS=$(eval VKDT_JPEG_CFLAGS := $$(shell pkg-config --cflags libjpeg
 VKDT_JPEG_LDFLAGS=$(eval VKDT_JPEG_LDFLAGS := $$(shell pkg-config --libs libjpeg))$(VKDT_JPEG_LDFLAGS)
 export VKDT_JPEG_CFLAGS VKDT_JPEG_LDFLAGS
 
+# Similar for finding libjxl
+VKDT_JXL_CFLAGS=$(eval VKDT_JXL_CFLAGS := $$(shell pkg-config --cflags libjxl libjxl_threads))$(VKDT_JXL_CFLAGS)
+VKDT_JXL_LDFLAGS=$(eval VKDT_JXL_LDFLAGS := $$(shell pkg-config --libs libjxl libjxl_threads))$(VKDT_JXL_LDFLAGS)
+export VKDT_JXL_CFLAGS VKDT_JXL_LDFLAGS
+
 # if you disable this, the i-raw module will not be built
 # and you will be unable to load raw images.
 # note that since this in on by default in here, you'll need
