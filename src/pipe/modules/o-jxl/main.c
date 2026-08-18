@@ -2,22 +2,28 @@
 
 #include <jxl/encode.h>
 #include <jxl/resizable_parallel_runner.h>
+
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-JxlEncoderStatus JxlAssert(JxlEncoderStatus code, JxlEncoder *encoder, int line) {
-  if(code != JXL_ENC_SUCCESS) {
+// Mostly copying from darktable (and thus GPLv3), but also  o-jpg, o-exr and o-pfm.
+// Cobbled together by me, with very limited C or programming knowledge (but not an LLM!).
+// Currently very basic. And bad.
+
+JxlEncoderStatus JxlAssert(JxlEncoderStatus code,
+                           JxlEncoder *encoder,
+                           int line)
+{
+  if(code != JXL_ENC_SUCCESS)
+  {
     JxlEncoderError error = JxlEncoderGetError(encoder);
-    fprintf(stderr, "[o-jxl] libjxl call failed with err %d (src/pipe/modules/o-jxl/main.c#L%d)\n", error,      \
-            line);
+    fprintf(stderr, "[o-jxl] libjxl call failed with err %d (src/pipe/modules/o-jxl/main.c#L%d)\n", error, line);
   }
   return code;
 }
-
-
 
 void write_sink(
     dt_module_t            *module,
@@ -28,14 +34,17 @@ void write_sink(
   const char *basename = dt_module_param_string(module, 0);
   fprintf(stderr, "[o-jxl] writing '%s'\n", basename);
   const uint16_t *p16 = buf;
-  const dt_image_params_t *img_param = dt_module_get_input_img_param(module->graph, module, dt_token("input"));
-  if(!img_param) return;
-
+  
   const size_t width  = module->connector[0].roi.wd;
   const size_t height = module->connector[0].roi.ht;
 
+  const dt_colour_primaries_t primaries =  module->img_param.colour_primaries;
+  const dt_colour_trc_t trc = module->img_param.colour_trc;
+  
   char filename[512];
   snprintf(filename, sizeof(filename), "%s.jxl", basename);
+
+
 
   JxlEncoder *encoder = JxlEncoderCreate(NULL);
 
@@ -56,6 +65,8 @@ void write_sink(
   basic_info.exponent_bits_per_sample = 5;
 
   const float quality = dt_module_param_float(module, 1)[0];
+  // JXL natively uses ‘distance’ a [0:25] value. This aims to estimate a distance
+  // roughly equivalent to what would be obtained with libjpeg-turbo with the same quality parameter.
   const float distance = JxlEncoderDistanceFromQuality(quality);
   JxlAssert(JxlEncoderSetFrameDistance(frame_settings, distance), encoder, __LINE__);
   if(quality == 100)
@@ -63,21 +74,63 @@ void write_sink(
     // HAVE NOT DONE LOSSLESS
   }
 
-  // Don’t know how to create GUI sliders, so just the default effort.
+  // Don’t know how to create GUI sliders, so just setting the default effort of 7.
   JxlAssert(JxlEncoderFrameSettingsSetOption(frame_settings, JXL_ENC_FRAME_SETTING_EFFORT, 7), encoder, __LINE__);
 
   // Codestream level should be chosen automatically given the settings
   JxlAssert(JxlEncoderSetBasicInfo(encoder, &basic_info), encoder, __LINE__);
 
-  // Also just hard coding for now
-  JxlColorEncoding color_encoding;
-  color_encoding.color_space = JXL_COLOR_SPACE_RGB;
-  color_encoding.primaries = JXL_PRIMARIES_2100;
-  color_encoding.transfer_function = JXL_TRANSFER_FUNCTION_HLG;
-  color_encoding.white_point = JXL_WHITE_POINT_D65;
-  color_encoding.rendering_intent = JXL_RENDERING_INTENT_PERCEPTUAL;
 
-  JxlAssert(JxlEncoderSetColorEncoding(encoder, &color_encoding), encoder, __LINE__);
+
+  // Also just hard coding for now
+  JxlColorEncoding colour_encoding;
+
+  colour_encoding.color_space = JXL_COLOR_SPACE_RGB;
+  colour_encoding.white_point = JXL_WHITE_POINT_D65;
+
+  JxlPrimaries nativePrimaries = 0;
+  switch(primaries)
+  {
+    case s_colour_primaries_srgb:   nativePrimaries = JXL_PRIMARIES_SRGB;
+                                    break;
+    case s_colour_primaries_P3:     nativePrimaries = JXL_PRIMARIES_P3;
+                                    break;
+    case s_colour_primaries_2020:   nativePrimaries = JXL_PRIMARIES_2100;
+                                    break;
+    default:                        nativePrimaries = JXL_PRIMARIES_CUSTOM;
+    // Then set these? Or ICC?      colour_encoding.primaries_red_xy   = double;
+    //                              colour_encoding.primaries_green_xy = double;
+    //                              colour_encoding.primaries_blue_xy  = double;
+  }
+  colour_encoding.primaries = nativePrimaries;
+
+  JxlTransferFunction nativeTRC = 0;
+  switch(trc)
+  {
+    case s_colour_trc_linear:       nativeTRC = JXL_TRANSFER_FUNCTION_LINEAR;
+                                    break;
+    case s_colour_trc_709:          nativeTRC = JXL_TRANSFER_FUNCTION_709;
+                                    break;
+    case s_colour_trc_srgb:         nativeTRC = JXL_TRANSFER_FUNCTION_SRGB;
+                                    break;
+    case s_colour_trc_PQ:           nativeTRC = JXL_TRANSFER_FUNCTION_PQ;
+                                    break;
+    case s_colour_trc_DCI:          nativeTRC = JXL_TRANSFER_FUNCTION_DCI;
+                                    break;
+    case s_colour_trc_HLG:          nativeTRC = JXL_TRANSFER_FUNCTION_HLG;
+                                    break;
+    case s_colour_trc_gamma:        nativeTRC = JXL_TRANSFER_FUNCTION_GAMMA;
+                                    // Then set gamma value. But I think s_colour_trc_gamma is only 2.2.
+                                    colour_encoding.gamma = 2.2;
+                                    break;
+    default:                        nativeTRC = JXL_TRANSFER_FUNCTION_UNKNOWN;
+  }
+  colour_encoding.transfer_function = nativeTRC;
+
+  colour_encoding.rendering_intent = JXL_RENDERING_INTENT_RELATIVE;
+  JxlAssert(JxlEncoderSetColorEncoding(encoder, &colour_encoding), encoder, __LINE__);
+
+
 
   JxlPixelFormat pixel_format = { 3, JXL_TYPE_FLOAT16, JXL_NATIVE_ENDIAN, 0 };
 
