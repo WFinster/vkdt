@@ -9,9 +9,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+
+
 // Mostly copying from darktable (and thus GPLv3), but also  o-jpg, o-exr and o-pfm.
 // Cobbled together by me, with very limited C or programming knowledge (but not an LLM!).
 // Currently very basic. And bad.
+
+
 
 JxlEncoderStatus JxlAssert(JxlEncoderStatus code,
                            JxlEncoder *encoder,
@@ -24,6 +28,8 @@ JxlEncoderStatus JxlAssert(JxlEncoderStatus code,
   }
   return code;
 }
+
+
 
 void write_sink(
     dt_module_t            *module,
@@ -75,32 +81,63 @@ void write_sink(
   }
 
   // Don’t know how to create GUI sliders, so just setting the default effort of 7.
-  JxlAssert(JxlEncoderFrameSettingsSetOption(frame_settings, JXL_ENC_FRAME_SETTING_EFFORT, 7), encoder, __LINE__);
+  JxlAssert(JxlEncoderFrameSettingsSetOption(frame_settings,
+                                             JXL_ENC_FRAME_SETTING_EFFORT,
+                                             7),encoder,
+            __LINE__);
 
   // Codestream level should be chosen automatically given the settings
   JxlAssert(JxlEncoderSetBasicInfo(encoder, &basic_info), encoder, __LINE__);
 
 
 
-  // Also just hard coding for now
+  // Only currently support the options shown in the export GUI, except ‘custom’ as I don’t know where the custom values come from.
   JxlColorEncoding colour_encoding;
 
   colour_encoding.color_space = JXL_COLOR_SPACE_RGB;
-  colour_encoding.white_point = JXL_WHITE_POINT_D65;
-
+  
   JxlPrimaries nativePrimaries = 0;
   switch(primaries)
   {
     case s_colour_primaries_srgb:   nativePrimaries = JXL_PRIMARIES_SRGB;
+                                    colour_encoding.white_point = JXL_WHITE_POINT_D65;
                                     break;
     case s_colour_primaries_P3:     nativePrimaries = JXL_PRIMARIES_P3;
+                                    colour_encoding.white_point = JXL_WHITE_POINT_D65;
                                     break;
     case s_colour_primaries_2020:   nativePrimaries = JXL_PRIMARIES_2100;
+                                    colour_encoding.white_point = JXL_WHITE_POINT_D65;
                                     break;
+                                    // Derived from section §4.3.1.1 of [Adobe® RGB (1998) Color Image Encoding]
+                                    // (https://www.adobe.com/digitalimag/pdfs/AdobeRGB1998.pdf).
+                                    // Not looking right. Dunno if this, the gamma or something else is wrong.
+    case s_colour_primaries_adobe:  nativePrimaries = JXL_PRIMARIES_CUSTOM;
+                                    {
+                                      const double red_xy[] = { 0.64, 0.33 };
+                                        memcpy(colour_encoding.primaries_red_xy, red_xy, sizeof(red_xy));
+                                      const double green_xy[] = { 0.21, 0.71 };
+                                        memcpy(colour_encoding.primaries_green_xy, green_xy, sizeof(green_xy));
+                                      const double blue_xy[] = { 0.15, 0.06 };
+                                        memcpy(colour_encoding.primaries_blue_xy, blue_xy, sizeof(blue_xy));
+                                    }
+                                    colour_encoding.white_point = JXL_WHITE_POINT_D65;
+                                    break;
+                                    // I’m not super sure if XYZ can be a JXL_COLOR_SPACE_RGB.
+                                    // From §8.1 of ITU-T H.273 (V4) (07/2024). Because I wasn’t sure!
+                                    // I get an image out, but still errors in log?
+    case s_colour_primaries_XYZ:    nativePrimaries = JXL_PRIMARIES_CUSTOM;
+                                    {
+                                      const double red_xy[] = { 1.0, 0.0 };
+                                        memcpy(colour_encoding.primaries_red_xy, red_xy, sizeof(red_xy));
+                                      const double green_xy[] = { 0.0, 1.0 };
+                                        memcpy(colour_encoding.primaries_green_xy, green_xy, sizeof(green_xy));
+                                      const double blue_xy[] = { 0.0, 0.0 };
+                                        memcpy(colour_encoding.primaries_blue_xy, blue_xy, sizeof(blue_xy));
+                                    }
+                                    colour_encoding.white_point = JXL_WHITE_POINT_E;
+                                    break;
+
     default:                        nativePrimaries = JXL_PRIMARIES_CUSTOM;
-    // Then set these? Or ICC?      colour_encoding.primaries_red_xy   = double;
-    //                              colour_encoding.primaries_green_xy = double;
-    //                              colour_encoding.primaries_blue_xy  = double;
   }
   colour_encoding.primaries = nativePrimaries;
 
@@ -120,14 +157,20 @@ void write_sink(
     case s_colour_trc_HLG:          nativeTRC = JXL_TRANSFER_FUNCTION_HLG;
                                     break;
     case s_colour_trc_gamma:        nativeTRC = JXL_TRANSFER_FUNCTION_GAMMA;
-                                    // Then set gamma value. But I think s_colour_trc_gamma is only 2.2.
-                                    colour_encoding.gamma = 2.2;
+                                    // Then set gamma value. But I think s_colour_trc_gamma is only for AdobeRGB?.
+                                    // Derived from section §4.3.1.2 of [Adobe® RGB (1998) Color Image Encoding]
+                                    // (https://www.adobe.com/digitalimag/pdfs/AdobeRGB1998.pdf).
+                                    // colour_encoding.gamma = 256.0 / 563.0;
+                                    colour_encoding.gamma = 1.0 / 2.2;
                                     break;
     default:                        nativeTRC = JXL_TRANSFER_FUNCTION_UNKNOWN;
   }
   colour_encoding.transfer_function = nativeTRC;
 
+  // Setting as relative for now. Don’t really know what this even does, but don’t think there’s any existing value to use.
+  // ISO 15076-1:2010
   colour_encoding.rendering_intent = JXL_RENDERING_INTENT_RELATIVE;
+  
   JxlAssert(JxlEncoderSetColorEncoding(encoder, &colour_encoding), encoder, __LINE__);
 
 
