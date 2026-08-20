@@ -51,16 +51,26 @@ void write_sink(
   snprintf(filename, sizeof(filename), "%s.jxl", basename);
 
 
+  // Initialising these three here so I can always `goto end` and free them.
+  uint16_t *pixels = NULL;
+  uint8_t *out_buf = NULL;
+  FILE *out_file = NULL;
 
   JxlEncoder *encoder = JxlEncoderCreate(NULL);
 
   const unsigned num_threads = JxlResizableParallelRunnerSuggestThreads(width, height);
   void *runner = JxlResizableParallelRunnerCreate(NULL);
   JxlResizableParallelRunnerSetThreads(runner, num_threads);
-  JxlAssert(JxlEncoderSetParallelRunner(encoder, JxlResizableParallelRunner, runner), encoder, __LINE__);
+  if(JxlAssert(JxlEncoderSetParallelRunner(encoder,
+                                        JxlResizableParallelRunner,
+                                        runner),
+            encoder,
+            __LINE__)) goto end;
 
   // Automatically freed when we destroy the encoder
   JxlEncoderFrameSettings *frame_settings = JxlEncoderFrameSettingsCreate(encoder, NULL);
+
+  JxlPixelFormat pixel_format = { 3, JXL_TYPE_FLOAT16, JXL_NATIVE_ENDIAN, 0 };
 
   // Set encoder basic info, just f16 for now
   JxlBasicInfo basic_info;
@@ -74,20 +84,27 @@ void write_sink(
   // JXL natively uses ‘distance’ a [0:25] value. This aims to estimate a distance
   // roughly equivalent to what would be obtained with libjpeg-turbo with the same quality parameter.
   const float distance = JxlEncoderDistanceFromQuality(quality);
-  JxlAssert(JxlEncoderSetFrameDistance(frame_settings, distance), encoder, __LINE__);
+  if(JxlAssert(JxlEncoderSetFrameDistance(frame_settings,
+                                       distance),
+            encoder,
+            __LINE__)) goto end;
   if(quality == 100)
   {
     // HAVE NOT DONE LOSSLESS
   }
 
   // Don’t know how to create GUI sliders, so just setting the default effort of 7.
-  JxlAssert(JxlEncoderFrameSettingsSetOption(frame_settings,
+  if(JxlAssert(JxlEncoderFrameSettingsSetOption(frame_settings,
                                              JXL_ENC_FRAME_SETTING_EFFORT,
-                                             7),encoder,
-            __LINE__);
+                                             7),
+            encoder,
+            __LINE__)) goto end;
 
   // Codestream level should be chosen automatically given the settings
-  JxlAssert(JxlEncoderSetBasicInfo(encoder, &basic_info), encoder, __LINE__);
+  if(JxlAssert(JxlEncoderSetBasicInfo(encoder,
+                                   &basic_info),
+            encoder,
+            __LINE__)) goto end;
 
 
 
@@ -110,34 +127,34 @@ void write_sink(
                                     break;
                                     // Derived from section §4.3.1.1 of [Adobe® RGB (1998) Color Image Encoding]
                                     // (https://www.adobe.com/digitalimag/pdfs/AdobeRGB1998.pdf).
-                                    // Not looking right. Dunno if this, the gamma or something else is wrong.
+                                    // Output images getting black clipping? Dunno if this, the gamma or something else is wrong.
     case s_colour_primaries_adobe:  nativePrimaries = JXL_PRIMARIES_CUSTOM;
-                                    {
-                                      const double red_xy[] = { 0.64, 0.33 };
-                                        memcpy(colour_encoding.primaries_red_xy, red_xy, sizeof(red_xy));
-                                      const double green_xy[] = { 0.21, 0.71 };
-                                        memcpy(colour_encoding.primaries_green_xy, green_xy, sizeof(green_xy));
-                                      const double blue_xy[] = { 0.15, 0.06 };
-                                        memcpy(colour_encoding.primaries_blue_xy, blue_xy, sizeof(blue_xy));
-                                    }
+                                    colour_encoding.primaries_red_xy[0] = 0.64;
+                                    colour_encoding.primaries_red_xy[1] = 0.33;
+                                    colour_encoding.primaries_green_xy[0] = 0.21;
+                                    colour_encoding.primaries_green_xy[1] = 0.71;
+                                    colour_encoding.primaries_blue_xy[0] = 0.15;
+                                    colour_encoding.primaries_blue_xy[1] = 0.06;
                                     colour_encoding.white_point = JXL_WHITE_POINT_D65;
                                     break;
-                                    // I’m not super sure if XYZ can be a JXL_COLOR_SPACE_RGB.
-                                    // From §8.1 of ITU-T H.273 (V4) (07/2024). Because I wasn’t sure!
-                                    // I get an image out, but still errors in log?
-    case s_colour_primaries_XYZ:    nativePrimaries = JXL_PRIMARIES_CUSTOM;
-                                    {
-                                      const double red_xy[] = { 1.0, 0.0 };
-                                        memcpy(colour_encoding.primaries_red_xy, red_xy, sizeof(red_xy));
-                                      const double green_xy[] = { 0.0, 1.0 };
-                                        memcpy(colour_encoding.primaries_green_xy, green_xy, sizeof(green_xy));
-                                      const double blue_xy[] = { 0.0, 0.0 };
-                                        memcpy(colour_encoding.primaries_blue_xy, blue_xy, sizeof(blue_xy));
-                                    }
+                                    // Values from §8.1 of ITU-T H.273 (V4) (07/2024). Because I wasn’t sure!
+                                    // But not working because [0.0 not an allowed primary?](https://github.com/libjxl/libjxl/blob/e4b66d30278df6050137a4529e5efde5ef691f32/lib/jxl/cms/color_encoding_cms.h#L402_)
+                                    // Escpecially weird becuase libjxl (does exactly this)[https://github.com/libjxl/libjxl/blob/e4b66d30278df6050137a4529e5efde5ef691f32/lib/extras/dec/apng.cc#L171].
+                                    // Disabled for now.
+    /* case s_colour_primaries_XYZ:    nativePrimaries = JXL_PRIMARIES_CUSTOM;
+                                    colour_encoding.primaries_red_xy[0] = 1;
+                                    colour_encoding.primaries_red_xy[1] = 0;
+                                    colour_encoding.primaries_green_xy[0] = 0;
+                                    colour_encoding.primaries_green_xy[1] = 1;
+                                    colour_encoding.primaries_blue_xy[0] = 0;
+                                    colour_encoding.primaries_blue_xy[1] = 0;
                                     colour_encoding.white_point = JXL_WHITE_POINT_E;
-                                    break;
-
-    default:                        nativePrimaries = JXL_PRIMARIES_CUSTOM;
+                                    break; */
+    default:                        snprintf(module->graph->gui_msg_buf,
+                                             sizeof(module->graph->gui_msg_buf),
+                                             "[o-jxl] Recieved primaries currently not supported for export! Aborting…");
+                                    module->graph->gui_msg = module->graph->gui_msg_buf;
+                                    goto end;
   }
   colour_encoding.primaries = nativePrimaries;
 
@@ -160,26 +177,37 @@ void write_sink(
                                     // Then set gamma value. But I think s_colour_trc_gamma is only for AdobeRGB?.
                                     // Derived from section §4.3.1.2 of [Adobe® RGB (1998) Color Image Encoding]
                                     // (https://www.adobe.com/digitalimag/pdfs/AdobeRGB1998.pdf).
-                                    // colour_encoding.gamma = 256.0 / 563.0;
-                                    colour_encoding.gamma = 1.0 / 2.2;
+                                    colour_encoding.gamma = 256.0 / 563.0;
+                                    // Also doesn’t work.
+                                    // colour_encoding.gamma = 1.0 / 2.2;
                                     break;
-    default:                        nativeTRC = JXL_TRANSFER_FUNCTION_UNKNOWN;
+                                    // Not sure if this is what I should do?
+    case s_colour_trc_unknown:      nativeTRC = JXL_TRANSFER_FUNCTION_UNKNOWN;
+                                    break;
+    default:                        snprintf(module->graph->gui_msg_buf,
+                                             sizeof(module->graph->gui_msg_buf),
+                                             "[o-jxl] Recieved trc currently not supported for export! Aborting…");
+                                    module->graph->gui_msg = module->graph->gui_msg_buf;
+                                    goto end;
   }
   colour_encoding.transfer_function = nativeTRC;
 
-  // Setting as relative for now. Don’t really know what this even does, but don’t think there’s any existing value to use.
-  // ISO 15076-1:2010
+  // Hardcoding as relative for now.
+  // ISO 15076-1:2010, but don’t currently know what they really do and I can’t find any reference to them within vkdt. (They are in darktable).
   colour_encoding.rendering_intent = JXL_RENDERING_INTENT_RELATIVE;
   
-  JxlAssert(JxlEncoderSetColorEncoding(encoder, &colour_encoding), encoder, __LINE__);
+  if(JxlAssert(JxlEncoderSetColorEncoding(encoder,
+                                       &colour_encoding),
+            encoder,
+            __LINE__)) goto end;
 
 
-
-  JxlPixelFormat pixel_format = { 3, JXL_TYPE_FLOAT16, JXL_NATIVE_ENDIAN, 0 };
+  // Pretty much straight from darktable. Don’t really understand what’s going on.
+  // Switched to uint16_t which hopefully has the same characteristics as f16.
 
   // Fix pixel stride
   const size_t pixels_size = width * height * 3 * sizeof(uint16_t);
-  uint16_t *pixels = malloc(pixels_size);
+  pixels = malloc(pixels_size);
   if(!pixels)
     fprintf(stderr, "could not allocate output pixel buffer of size %zu", pixels_size);
 
@@ -197,7 +225,12 @@ void write_sink(
   }
 
   printf("pixels are at %p and are %zu long.\n", pixels, pixels_size);
-  JxlAssert(JxlEncoderAddImageFrame(frame_settings, &pixel_format, pixels, pixels_size), encoder, __LINE__);
+  if(JxlAssert(JxlEncoderAddImageFrame(frame_settings,
+                                    &pixel_format,
+                                    pixels,
+                                    pixels_size),
+            encoder,
+            __LINE__)) goto end;
 
   // No more image frames nor metadata boxes to add
   JxlEncoderCloseInput(encoder);
@@ -207,7 +240,7 @@ void write_sink(
   size_t chunk_size = 1 << 16;
   size_t out_len = chunk_size;
   printf("out_len = %zu\n", out_len);
-  uint8_t *out_buf = malloc(out_len);
+  out_buf = malloc(out_len);
   printf("out_buf = %p\n", out_buf);
   if(!out_buf) printf("could not allocate codestream buffer of size %zu", out_len);
   uint8_t *out_cur = out_buf;
@@ -240,10 +273,65 @@ void write_sink(
 
   // Write codestream contents to file
   printf("out_len = %zu\n", out_len);
-  FILE *out_file = fopen(filename, "wb");
+  out_file = fopen(filename, "wb");
   if(fwrite(out_buf, sizeof(uint8_t), out_len, out_file) != out_len)
     printf("could not write bytes to `%s'", filename);
 
+
+
+  // Straight from o-jpg.
+  #ifndef __ANDROID__
+  const int copy_exif = dt_module_param_int(module, dt_module_get_param(module->so, dt_token("exif")))[0];
+  if(copy_exif)
+  {
+    char src_filename[1024] = {0};
+    for(int m=0;m<module->graph->num_modules;m++)
+    { // locate main input module, if it is jpg or raw (these have exif)
+      const dt_module_t *mod2 = module->graph->module+m;
+      if((mod2->name == dt_token("i-jpg") && mod2->inst == dt_token("main")) ||
+         (mod2->name == dt_token("i-raw") && mod2->inst == dt_token("main")))
+      {
+        const int   id   = dt_module_param_int(mod2, dt_module_get_param(mod2->so, dt_token("startid")))[0];
+        const char *base = dt_module_param_string(mod2, dt_module_get_param(mod2->so, dt_token("filename")));
+        if(dt_graph_get_resource_filename(mod2, base, module->graph->frame + id, src_filename, sizeof(src_filename)))
+          return;
+      }
+    }
+    if(src_filename[0] == 0) return;
+
+    // maybe route this string in via o-jpg params (beware of the ':' and then dt_sanitize_user_string + dt_strexpand it)
+    char cmd[1024];
+    if(sizeof(cmd) <= snprintf(cmd, sizeof(cmd), "\"%s/exiftool\" -TagsFromFile \"%s\" \"-all:all>all:all\" -Software=\"vkdt\" -ModifyDate=\"now\" -*image*= -*orientation*= -orientation=normal -overwrite_original \"%s\"",
+          dt_pipe.basedir, src_filename, filename)) return;
+#ifdef _WIN64
+    // sometimes another set of quotes is needed
+    char tmp[1024];
+    snprintf(tmp, sizeof(tmp), "\"%s\"", cmd);
+    snprintf(cmd, sizeof(cmd), "%s", tmp);
+#endif
+    // TODO find a way to access the model-based time offset in the db (cli doesn't have a db).
+    // then insert "-AllDates+=%s", timeoffset before the "now" above.
+
+    // or async if(fork()) exec(cmd); ? for cli probably staying in this thread is safer:
+    FILE *f = popen(cmd, "r");
+    int ret = 0;
+    if(f)
+    { // drain empty
+      while(!feof(f) && !ferror(f) && (fgetc(f) != EOF));
+      ret = pclose(f);
+    }
+    if(ret)
+    { // issue a gui message
+      snprintf(module->graph->gui_msg_buf, sizeof(module->graph->gui_msg_buf),
+          "o-jxl: unable to run exiftool to copy metadata! maybe you need to install it?");
+      module->graph->gui_msg = module->graph->gui_msg_buf;
+    }
+  }
+#endif
+
+
+
+  end:
   if(runner)
     JxlResizableParallelRunnerDestroy(runner);
   if(encoder)
@@ -253,3 +341,4 @@ void write_sink(
   free(pixels);
   free(out_buf);
 }
+  
