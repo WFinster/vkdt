@@ -51,6 +51,7 @@ void write_sink(
   snprintf(filename, sizeof(filename), "%s.jxl", basename);
 
 
+  int error = 0;
   // Initialising these three here so I can always `goto end` and free them.
   uint16_t *pixels = NULL;
   uint8_t *out_buf = NULL;
@@ -65,10 +66,22 @@ void write_sink(
                                         JxlResizableParallelRunner,
                                         runner),
             encoder,
-            __LINE__)) goto end;
+            __LINE__))
+  {
+    error = 1;
+    goto end;
+  }
 
-  // Automatically freed when we destroy the encoder
-  JxlEncoderFrameSettings *frame_settings = JxlEncoderFrameSettingsCreate(encoder, NULL);
+  if(JxlAssert(JxlEncoderUseContainer(encoder,
+                                      1),
+               encoder,
+               __LINE__))
+  {
+    error = 1;
+    goto end;
+  }
+
+
 
   JxlPixelFormat pixel_format = { 3, JXL_TYPE_FLOAT16, JXL_NATIVE_ENDIAN, 0 };
 
@@ -80,31 +93,48 @@ void write_sink(
   basic_info.bits_per_sample = 16;
   basic_info.exponent_bits_per_sample = 5;
 
+  // Codestream level should be chosen automatically given the settings
+  if(JxlAssert(JxlEncoderSetBasicInfo(encoder,
+                                      &basic_info),
+               encoder,
+               __LINE__))
+  {
+    error = 1;
+    goto end;
+  }
+
+
+
+  // Automatically freed when we destroy the encoder
+  JxlEncoderFrameSettings *frame_settings = JxlEncoderFrameSettingsCreate(encoder, NULL);
+
   const float quality = dt_module_param_float(module, 1)[0];
   // JXL natively uses ‘distance’ a [0:25] value. This aims to estimate a distance
   // roughly equivalent to what would be obtained with libjpeg-turbo with the same quality parameter.
   const float distance = JxlEncoderDistanceFromQuality(quality);
   if(JxlAssert(JxlEncoderSetFrameDistance(frame_settings,
-                                       distance),
+                                          distance),
             encoder,
-            __LINE__)) goto end;
+            __LINE__))
+  {
+    error = 1;
+    goto end;
+  }
   if(quality == 100)
   {
     // HAVE NOT DONE LOSSLESS
   }
-
+  
   // Don’t know how to create GUI sliders, so just setting the default effort of 7.
   if(JxlAssert(JxlEncoderFrameSettingsSetOption(frame_settings,
-                                             JXL_ENC_FRAME_SETTING_EFFORT,
-                                             7),
-            encoder,
-            __LINE__)) goto end;
-
-  // Codestream level should be chosen automatically given the settings
-  if(JxlAssert(JxlEncoderSetBasicInfo(encoder,
-                                   &basic_info),
-            encoder,
-            __LINE__)) goto end;
+                                                JXL_ENC_FRAME_SETTING_EFFORT,
+                                                7),
+               encoder,
+               __LINE__))
+  {
+    error = 1;
+    goto end;
+  }
 
 
 
@@ -154,7 +184,11 @@ void write_sink(
                                              sizeof(module->graph->gui_msg_buf),
                                              "[o-jxl] Recieved primaries currently not supported for export! Aborting…");
                                     module->graph->gui_msg = module->graph->gui_msg_buf;
+
+                                {
+                                    error = 1;
                                     goto end;
+                                  }
   }
   colour_encoding.primaries = nativePrimaries;
 
@@ -188,7 +222,11 @@ void write_sink(
                                              sizeof(module->graph->gui_msg_buf),
                                              "[o-jxl] Recieved trc currently not supported for export! Aborting…");
                                     module->graph->gui_msg = module->graph->gui_msg_buf;
+
+                                {
+                                    error = 1;
                                     goto end;
+                                  }
   }
   colour_encoding.transfer_function = nativeTRC;
 
@@ -199,7 +237,11 @@ void write_sink(
   if(JxlAssert(JxlEncoderSetColorEncoding(encoder,
                                        &colour_encoding),
             encoder,
-            __LINE__)) goto end;
+            __LINE__))
+  {
+    error = 1;
+    goto end;
+  }
 
 
   // Pretty much straight from darktable. Don’t really understand what’s going on.
@@ -224,13 +266,16 @@ void write_sink(
     }
   }
 
-  printf("pixels are at %p and are %zu long.\n", pixels, pixels_size);
   if(JxlAssert(JxlEncoderAddImageFrame(frame_settings,
                                     &pixel_format,
                                     pixels,
                                     pixels_size),
             encoder,
-            __LINE__)) goto end;
+            __LINE__))
+  {
+      error = 1;
+      goto end;
+    }
 
   // No more image frames nor metadata boxes to add
   JxlEncoderCloseInput(encoder);
@@ -239,9 +284,7 @@ void write_sink(
   // TODO: Can we better estimate what the optimal size of chunks is for this image?
   size_t chunk_size = 1 << 16;
   size_t out_len = chunk_size;
-  printf("out_len = %zu\n", out_len);
   out_buf = malloc(out_len);
-  printf("out_buf = %p\n", out_buf);
   if(!out_buf) printf("could not allocate codestream buffer of size %zu", out_len);
   uint8_t *out_cur = out_buf;
   size_t out_avail = out_len;
@@ -249,17 +292,11 @@ void write_sink(
   JxlEncoderStatus out_status = JXL_ENC_NEED_MORE_OUTPUT;
   while(out_status == JXL_ENC_NEED_MORE_OUTPUT) {
     out_status = JxlEncoderProcessOutput(encoder, &out_cur, &out_avail);
-    if(out_status == JXL_ENC_SUCCESS) printf("out_status = JXL_ENC_SUCCESS\n");
-    if(out_status == JXL_ENC_ERROR) printf("out_status = JXL_ENC_ERROR\n");
-    if(out_status == JXL_ENC_NEED_MORE_OUTPUT) printf("out_status = JXL_ENC_NEED_MORE_OUTPUT\n");
     if(out_status == JXL_ENC_NEED_MORE_OUTPUT) {
-      printf("Ok?\n");
       const size_t offset = out_cur - out_buf;
-      printf("offset = %zu\n", offset);
       if(chunk_size < 1 << 20)
         chunk_size *= 2;
 
-      printf("out_buf = %p\n", out_buf);
       out_len += chunk_size;
       out_buf = realloc(out_buf, out_len);
       out_cur = out_buf + offset;
@@ -272,17 +309,28 @@ void write_sink(
   out_len = out_cur - out_buf;
 
   // Write codestream contents to file
-  printf("out_len = %zu\n", out_len);
   out_file = fopen(filename, "wb");
   if(fwrite(out_buf, sizeof(uint8_t), out_len, out_file) != out_len)
     printf("could not write bytes to `%s'", filename);
 
 
 
-  // Straight from o-jpg.
-  #ifndef __ANDROID__
+  end:
+  if(runner)
+    JxlResizableParallelRunnerDestroy(runner);
+  if(encoder)
+    JxlEncoderDestroy(encoder);
+  if(out_file)
+    fclose(out_file);
+  free(pixels);
+  free(out_buf);
+
+
+
+    // Straight from o-jpg, with a bad error check thing because the `end` has to run before this and I don’t know how to do error handling properly, and [o-jpg] changed to [o-jxl]. 
+#ifndef __ANDROID__
   const int copy_exif = dt_module_param_int(module, dt_module_get_param(module->so, dt_token("exif")))[0];
-  if(copy_exif)
+  if(copy_exif && !error)
   {
     char src_filename[1024] = {0};
     for(int m=0;m<module->graph->num_modules;m++)
@@ -328,17 +376,6 @@ void write_sink(
     }
   }
 #endif
-
-
-
-  end:
-  if(runner)
-    JxlResizableParallelRunnerDestroy(runner);
-  if(encoder)
-    JxlEncoderDestroy(encoder);
-  if(out_file)
-    fclose(out_file);
-  free(pixels);
-  free(out_buf);
 }
+
   
