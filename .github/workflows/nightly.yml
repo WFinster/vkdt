@@ -346,7 +346,7 @@ jobs:
             }
           }
           EOM
-        name: bundle exiftool
+        name: bundle exiftool for macOS
         run: |
           ditto $(brew --prefix)/bin/exiftool "$APP_DIR"/Contents/MacOS/exiftool
           chmod +w "$APP_DIR"/Contents/MacOS/exiftool
