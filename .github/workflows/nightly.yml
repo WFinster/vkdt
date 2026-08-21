@@ -305,7 +305,7 @@ jobs:
     steps:
       - name: install dependencies
         run: |
-          brew install pkgconf cmake jpeg-turbo jpeg-xl ffmpeg make glfw3 vulkan-validationlayers vulkan-headers rust vulkan-tools
+          brew install pkgconf cmake jpeg-turbo jpeg-xl ffmpeg make glfw3 vulkan-validationlayers vulkan-headers rust vulkan-tools exiftool
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
