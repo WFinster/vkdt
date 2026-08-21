@@ -346,7 +346,7 @@ jobs:
             }
           }
           EOM
-        name: bundle exiftool for macOS
+      - name: bundle exiftool
         run: |
           ditto $(brew --prefix)/bin/exiftool "$APP_DIR"/Contents/MacOS/exiftool
           chmod +w "$APP_DIR"/Contents/MacOS/exiftool
@@ -391,7 +391,7 @@ jobs:
             install_dependencies "$dtExecutable"
             fi
           done
-        name: modify dependency load paths to be relative
+      - name: modify dependency load paths to be relative
         run: |
           for depender in $(find "$APP_DIR" -type f -print0 | xargs -0 file | grep Mach-O | cut -d : -f 1); do
             for dependency in $(otool -l $depender 2> /dev/null | grep "LC_LOAD_DYLIB" -A 2 | awk '/name/ && !/\/System\// && !/\/usr\/lib\// { print $2 }' | sort -u); do
