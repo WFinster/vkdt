@@ -72,6 +72,9 @@ void write_sink(
     goto end;
   }
 
+  // JXL works as a raw codestream (and information necessary for display, like colour space and orientation
+  // are stored in the codestream), but using the container allows EXIF data, etc.
+  // exiftool can add it later, but it issues a minor error. So just setting it at the start..
   if(JxlAssert(JxlEncoderUseContainer(encoder,
                                       1),
                encoder,

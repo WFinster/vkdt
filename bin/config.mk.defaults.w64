@@ -11,6 +11,11 @@ VKDT_JPEG_CFLAGS=-I/c/msys64/ucrt64/include
 VKDT_JPEG_LDFLAGS=-L/ucrt64/lib -ljpeg
 export VKDT_JPEG_CFLAGS VKDT_JPEG_LDFLAGS
 
+# For jpeg-xl output
+VKDT_JPEG_CFLAGS=-I/c/msys64/ucrt64/include
+VKDT_JPEG_LDFLAGS=-L/ucrt64/lib -ljxl -ljxl_threads
+export VKDT_JPEG_CFLAGS VKDT_JPEG_LDFLAGS
+
 # if you disable this, the i-raw module will not be built
 # and you will be unable to load raw images.
 # note that since this in on by default in here, you'll need

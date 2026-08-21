@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   AppImage:
-    if: github.repository == 'hanatos/vkdt'
+    if: github.repository == 'WFinster/vkdt'
     name: nightly appimage
     runs-on: ubuntu-latest
     strategy:
@@ -190,7 +190,7 @@ jobs:
           retention-days: 1
 
   WindowsRawler:
-    if: github.repository == 'hanatos/vkdt'
+    if: github.repository == 'WFinster/vkdt'
     name: nightly vkdt windows with rawler backend
     runs-on: windows-latest
     strategy:
@@ -289,7 +289,7 @@ jobs:
           retention-days: 1
 
   macintosh:
-    if: github.repository == 'hanatos/vkdt'
+    if: github.repository == 'WFinster/vkdt'
     name: nightly vkdt macintosh
     strategy:
       fail-fast: true
@@ -346,32 +346,43 @@ jobs:
           EOM
       - name: copy library dependencies
         run: |
-          BREW_PREFIX=$(brew --prefix)
-          for i in $(seq 1 20)
-          do
-            found=0
-            for exe in ${APPDIR}/Contents/MacOS/vkdt* $(find ${APPDIR} -type f \( -name "*.dylib" -o -name "*.so" \))
-            do
-              [[ $exe == *rawloader-c* ]] && continue
-              # echo "our binary: $exe"
-              for lib in $(otool -L $exe 2>/dev/null | grep '(' | cut -f1 -d" ")
-              do
-                [[ $lib == /* ]] || continue
-                [[ $lib == /*libSystem* ]] && continue
-                [[ $lib == ${BREW_PREFIX}/* ]] || continue
-                # lib=$(echo $lib | awk "/${BREW_PREFIX//\//\\/}/{ gsub(/[[:space:]].*/, \"\", \$1); print \$1 }")
-                name=$(basename "$lib")
-                [[ "$name" = "" ]] && continue
-                echo "lib dependency $lib"
-                echo "name $name"
-                install_name_tool -change $lib @rpath/$name $exe
-                if [ ! -f "${APPDIR}/Contents/Frameworks/${name}" ]; then
-                  cp -L "$lib" "${APPDIR}/Contents/Frameworks/${name}"
-                  found=1
+          function install_dependencies {
+            local hbDependencies
+            absolutePath=$(dirname $(grealpath "$1"))
+            # Get dependencies of current executable
+            oToolLDependencies=$(otool -L "$1" 2>/dev/null | grep compatibility | cut -d\( -f1 | sed 's/^[[:blank:]]*//;s/[[:blank:]]*$//' | uniq)
+            # Handle library relative paths
+            oToolLDependencies=$(echo "$oToolLDependencies" | sed "s#@loader_path#${absolutePath}#")
+            oToolLDependencies=$(echo "$oToolLDependencies" | sed "s#@rpath#${absolutePath}#")
+            # Filter for homebrew dependencies
+            if [[ "$oToolLDependencies" == *"$(brew --prefix)"* ]]; then
+              hbDependencies=$(echo "$oToolLDependencies" | grep "$(brew --prefix)")
+            fi
+            # Check for any homebrew dependencies
+            if [[ -n "$hbDependencies" && "$hbDependencies" != "" ]]; then
+              # Iterate over homebrew dependencies to install them accordingly
+              for hbDependency in $hbDependencies; do
+                # Skip dependency if it is a dependency of itself
+                if [[ "$hbDependency" != "$1" ]]; then
+                  # Store file name
+                  dynDepOrigFile=$(basename "$hbDependency")
+                  dynDepTargetFile="$appDirectory/Contents/Frameworks/$dynDepOrigFile"
+                  # Install dependency if not yet existent
+                  if [[ ! -f "$dynDepTargetFile" ]]; then
+                    echo "Installing dependency $hbDependency of $1"
+                    # Copy dependency as not yet existent
+                    ditto "$hbDependency" "$dynDepTargetFile"
+                    # Handle transitive dependencies
+                    install_dependencies "$hbDependency"
+                  fi
                 fi
               done
-            done
-            [ "$found" = "0" ] && echo "terminating after iteration $i" && break
+            fi
+          
+          for dtExecutable in $(find "$appDirectory" -type f -print0 | xargs -0 file | grep Mach-O | cut -d : -f 1); do
+            if [[ -f "$dtExecutable" ]]; then
+            install_dependencies "$dtExecutable"
+            fi
           done
       - name: build dmg image
         run: |
