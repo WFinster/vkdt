@@ -57,7 +57,7 @@ jobs:
             git \
             glslang-tools \
             libjpeg-dev \
-            libjxl-dev
+            libjxl-dev \
             zlib1g-dev \
             libasound2-dev \
             libavformat-dev \
@@ -380,7 +380,7 @@ jobs:
                 fi
               done
             fi
-          
+          }
           for dtExecutable in $(find "$APP_DIR" -type f -print0 | xargs -0 file | grep Mach-O | cut -d : -f 1); do
             if [[ -f "$dtExecutable" ]]; then
             install_dependencies "$dtExecutable"
