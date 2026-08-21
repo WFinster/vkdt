@@ -366,7 +366,7 @@ jobs:
                 if [[ "$hbDependency" != "$1" ]]; then
                   # Store file name
                   dynDepOrigFile=$(basename "$hbDependency")
-                  dynDepTargetFile="$appDirectory/Contents/Frameworks/$dynDepOrigFile"
+                  dynDepTargetFile="$APP_DIR/Contents/Frameworks/$dynDepOrigFile"
                   # Install dependency if not yet existent
                   if [[ ! -f "$dynDepTargetFile" ]]; then
                     echo "Installing dependency $hbDependency of $1"
@@ -379,7 +379,7 @@ jobs:
               done
             fi
           
-          for dtExecutable in $(find "$appDirectory" -type f -print0 | xargs -0 file | grep Mach-O | cut -d : -f 1); do
+          for dtExecutable in $(find "$APP_DIR" -type f -print0 | xargs -0 file | grep Mach-O | cut -d : -f 1); do
             if [[ -f "$dtExecutable" ]]; then
             install_dependencies "$dtExecutable"
             fi
