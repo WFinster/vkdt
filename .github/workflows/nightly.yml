@@ -346,6 +346,10 @@ jobs:
             }
           }
           EOM
+        name: bundle exiftool
+        run: |
+          ditto $(brew --prefix)/bin/exiftool "$APP_DIR"/Contents/MacOS/exiftool
+          chmod +w "$APP_DIR"/Contents/MacOS/exiftool
       - name: copy library dependencies
         run: |
           function install_dependencies {
@@ -381,10 +385,18 @@ jobs:
               done
             fi
           }
+
           for dtExecutable in $(find "$APP_DIR" -type f -print0 | xargs -0 file | grep Mach-O | cut -d : -f 1); do
             if [[ -f "$dtExecutable" ]]; then
             install_dependencies "$dtExecutable"
             fi
+          done
+        name: modify dependency load paths to be relative
+        run: |
+          for depender in $(find "$APP_DIR" -type f -print0 | xargs -0 file | grep Mach-O | cut -d : -f 1); do
+            for dependency in $(otool -l $depender 2> /dev/null | grep "LC_LOAD_DYLIB" -A 2 | awk '/name/ && !/\/System\// && !/\/usr\/lib\// { print $2 }' | sort -u); do
+              install_name_tool -change $dependency @rpath/$(basename $dependency) $depender
+            done
           done
       - name: build dmg image
         run: |
@@ -427,6 +439,7 @@ jobs:
           </dict>
           </plist>
           EOM
+
           cat > Entitlements.plist << EOM
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -444,7 +457,7 @@ jobs:
           mkdir vkdt-image
           mv ${APP_DIR} vkdt-image/vkdt.app
 
-          hdiutil create -srcfolder vkdt-image -format UDSB vkdt-image.sparsebundle
+          hdiutil create -srcfolder vkdt-image -format UDSB vkdt-${{ env.VERSION }}.sparsebundle
           hdiutil convert vkdt-image.sparsebundle -format ULMO -o vkdt-${{ env.VERSION }}-${{ matrix.os }}.dmg
           # TODO: codesign --force -s - /path/to/dylib on every dylib
       - name: package upload
