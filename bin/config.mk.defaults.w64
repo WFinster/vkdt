@@ -11,7 +11,7 @@ VKDT_JPEG_CFLAGS=-I/c/msys64/ucrt64/include
 VKDT_JPEG_LDFLAGS=-L/ucrt64/lib -ljpeg
 export VKDT_JPEG_CFLAGS VKDT_JPEG_LDFLAGS
 
-# For jpeg-xl output
+# Similar for finding libjxl
 VKDT_JXL_CFLAGS=-I/c/msys64/ucrt64/include
 VKDT_JXL_LDFLAGS=-L/ucrt64/lib -ljxl -ljxl_threads
 export VKDT_JXL_CFLAGS VKDT_JXL_LDFLAGS
