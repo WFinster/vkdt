@@ -454,11 +454,11 @@ jobs:
           find ${APP_DIR} -type f -exec codesign -f -s - --entitlements Entitlements.plist -o runtime {} \;
           codesign -f -s - --entitlements Entitlements.plist -o runtime ${APP_DIR}
 
-          mkdir vkdt-image
-          mv ${APP_DIR} vkdt-image/vkdt.app
+          mkdir vkdt-${{ env.VERSION }}
+          mv ${APP_DIR} vkdt-${{ env.VERSION }}/vkdt.app
 
-          hdiutil create -srcfolder vkdt-image -format UDSB vkdt-${{ env.VERSION }}.sparsebundle
-          hdiutil convert vkdt-image.sparsebundle -format ULMO -o vkdt-${{ env.VERSION }}-${{ matrix.os }}.dmg
+          hdiutil create -srcfolder vkdt-${{ env.VERSION }} -format UDSB vkdt-${{ env.VERSION }}.sparsebundle
+          hdiutil convert vkdt-${{ env.VERSION }}.sparsebundle -format ULMO -o vkdt-${{ env.VERSION }}-${{ matrix.os }}.dmg
           # TODO: codesign --force -s - /path/to/dylib on every dylib
       - name: package upload
         if: ${{ success() }}
