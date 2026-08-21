@@ -301,7 +301,7 @@ jobs:
     env:
       SRC_DIR: ${{ github.workspace }}/src
       INSTALL_PREFIX: ${{ github.workspace }}/install
-      APPDIR: ${{ github.workspace }}/vkdt.app
+      APP_DIR: ${{ github.workspace }}/vkdt.app
     steps:
       - name: install dependencies
         run: |
@@ -325,18 +325,18 @@ jobs:
       - name: install into appdir
         run: |
           cd ${SRC_DIR}
-          mkdir -p ${APPDIR}/Contents/MacOS
-          mkdir ${APPDIR}/Contents/Frameworks
-          mkdir ${APPDIR}/Contents/Resources
-          make VKDTBIN=/tmp/dontinstall DESTDIR=${APPDIR} prefix=/Contents/MacOS install
-          mv ${APPDIR}/Contents/MacOS/lib/vkdt/* ${APPDIR}/Contents/MacOS/
-          rm -rf ${APPDIR}/Contents/MacOS/lib
-          cp vkdt.png ${APPDIR}/Contents/Resources/vkdt.png
+          mkdir -p ${APP_DIR}/Contents/MacOS
+          mkdir ${APP_DIR}/Contents/Frameworks
+          mkdir ${APP_DIR}/Contents/Resources
+          make VKDTBIN=/tmp/dontinstall DESTDIR=${APP_DIR} prefix=/Contents/MacOS install
+          mv ${APP_DIR}/Contents/MacOS/lib/vkdt/* ${APP_DIR}/Contents/MacOS/
+          rm -rf ${APP_DIR}/Contents/MacOS/lib
+          cp vkdt.png ${APP_DIR}/Contents/Resources/vkdt.png
       - name: bundle moltenvk
         run: |
-          ditto $(brew --prefix)/lib/libMoltenVK.dylib ${APPDIR}/Contents/Frameworks/libMoltenVK.dylib
-          mkdir -p "$APPDIR"/Contents/Resources/vulkan/icd.d
-          cat > ${APPDIR}/Contents/Resources/vulkan/icd.d/MoltenVK_icd.json << EOM
+          ditto $(brew --prefix)/lib/libMoltenVK.dylib ${APP_DIR}/Contents/Frameworks/libMoltenVK.dylib
+          mkdir -p "$APP_DIR"/Contents/Resources/vulkan/icd.d
+          cat > ${APP_DIR}/Contents/Resources/vulkan/icd.d/MoltenVK_icd.json << EOM
           {
             "file_format_version": "1.0.0",
             "ICD": {
@@ -389,7 +389,7 @@ jobs:
       - name: build dmg image
         run: |
           cd ${SRC_DIR}
-          cat > ${APPDIR}/Contents/Info.plist << EOM
+          cat > ${APP_DIR}/Contents/Info.plist << EOM
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -438,11 +438,11 @@ jobs:
           </plist>
           EOM
 
-          find ${APPDIR} -type f -exec codesign -f -s - --entitlements Entitlements.plist -o runtime {} \;
-          codesign -f -s - --entitlements Entitlements.plist -o runtime ${APPDIR}
+          find ${APP_DIR} -type f -exec codesign -f -s - --entitlements Entitlements.plist -o runtime {} \;
+          codesign -f -s - --entitlements Entitlements.plist -o runtime ${APP_DIR}
 
           mkdir vkdt-image
-          mv ${APPDIR} vkdt-image/vkdt.app
+          mv ${APP_DIR} vkdt-image/vkdt.app
 
           hdiutil create -srcfolder vkdt-image -format UDSB vkdt-image.sparsebundle
           hdiutil convert vkdt-image.sparsebundle -format ULMO -o vkdt-${{ env.VERSION }}-${{ matrix.os }}.dmg
