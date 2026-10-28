@@ -245,6 +245,11 @@ extern "C" {
 #ifndef NK_SCROLLBAR_HIDING_TIMEOUT
   #define NK_SCROLLBAR_HIDING_TIMEOUT 4.0f
 #endif
+/* scale applied to the drag sensitivity of properties/sliders while shift is held,
+ * for fine adjustment of the value (holds for keyboard and mouse dragging) */
+#ifndef NK_PROPERTY_FINE_SCALE
+  #define NK_PROPERTY_FINE_SCALE 0.1f
+#endif
 /*
  * ==============================================================
  *
@@ -21426,6 +21431,15 @@ nk_edit_buffer(struct nk_context *ctx, nk_flags flags,
 
     filter = (!filter) ? nk_filter_default: filter;
     prev_state = (unsigned char)edit->active;
+    /* a click anywhere else drops the keyboard focus. do this from the global input state,
+     * because widgets in read-only windows (cursor is elsewhere: the widget reports
+     * NK_WIDGET_ROM) would otherwise never see the click and stay focused forever. */
+    if (edit->active &&
+        ctx->input.mouse.buttons[NK_BUTTON_LEFT].clicked &&
+        ctx->input.mouse.buttons[NK_BUTTON_LEFT].down &&
+        !NK_INBOX(ctx->input.mouse.pos.x, ctx->input.mouse.pos.y,
+            bounds.x, bounds.y, bounds.w, bounds.h))
+        edit->active = nk_false;
     in = (flags & NK_EDIT_READ_ONLY) ? 0: in;
     ret_flags = nk_do_edit(&ctx->last_widget_state, &win->buffer, bounds, flags,
                     filter, edit, &style->edit, in, style->font);
@@ -21476,14 +21490,25 @@ nk_drag_behavior(nk_flags *state, const struct nk_input *in,
 
     if (left_mouse_down && left_mouse_click_in_cursor) {
         float delta, pixels;
-        pixels = in->mouse.delta.x;
+        /* hold shift for fine adjustment: the value changes more slowly with the cursor */
+        pixels = in->mouse.delta.x *
+            (nk_input_is_key_down(in, NK_KEY_SHIFT) ? NK_PROPERTY_FINE_SCALE : 1.0f);
         delta = pixels * inc_per_pixel;
         switch (variant->kind) {
         default: break;
-        case NK_PROPERTY_INT:
-            variant->value.i = variant->value.i + (int)delta;
-            variant->value.i = NK_CLAMP(variant->min_value.i, variant->value.i, variant->max_value.i);
-            break;
+        case NK_PROPERTY_INT: {
+            /* fine drags can be smaller than one step: carry the remainder over to the next frame */
+            static float residual = 0.0f;
+            if (nk_input_is_mouse_click_down_in_rect(in, NK_BUTTON_LEFT, drag, nk_true))
+                residual = 0.0f; /* new drag */
+            residual += delta;
+            int step = (int)residual;
+            if (step) {
+                residual -= (float)step;
+                variant->value.i = variant->value.i + step;
+                variant->value.i = NK_CLAMP(variant->min_value.i, variant->value.i, variant->max_value.i);
+            }
+            break; }
         case NK_PROPERTY_FLOAT:
             variant->value.f = variant->value.f + (float)delta;
             variant->value.f = NK_CLAMP(variant->min_value.f, variant->value.f, variant->max_value.f);
@@ -21922,6 +21947,21 @@ nk_property(struct nk_context *ctx, const char *name, struct nk_property_variant
     ctx->text_edit.clip = ctx->clip;
     in = ((s == NK_WIDGET_ROM && !win->property.active) ||
         layout->flags & NK_WINDOW_ROM || s == NK_WIDGET_DISABLED) ? 0 : &ctx->input;
+    /* a click anywhere else finishes editing and applies the typed value. do this from the
+     * global input state, because widgets in read-only windows (cursor is elsewhere: the
+     * widget reports NK_WIDGET_ROM) would otherwise never see the click. */
+    if (hot && *state == NK_PROPERTY_EDIT &&
+        ctx->input.mouse.buttons[NK_BUTTON_LEFT].clicked &&
+        ctx->input.mouse.buttons[NK_BUTTON_LEFT].down &&
+        !NK_INBOX(ctx->input.mouse.pos.x, ctx->input.mouse.pos.y,
+            bounds.x, bounds.y, bounds.w, bounds.h))
+    {
+        nk_property_save(variant, buffer, *len);
+        win->property.select_start = win->property.select_end = 0;
+        win->property.active = 0;
+        *state = NK_PROPERTY_DEFAULT;
+        in = 0; // just draw the committed value
+    }
     nk_do_property(&ctx->last_widget_state, &win->buffer, bounds, name,
         variant, inc_per_pixel, buffer, len, state, cursor, select_begin,
         select_end, &style->property, filter, in, style->font, &ctx->text_edit,
