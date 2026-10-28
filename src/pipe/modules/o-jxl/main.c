@@ -61,6 +61,9 @@ void write_sink(
   const dt_colour_primaries_t primaries =  module->img_param.colour_primaries;
   const dt_colour_trc_t trc = module->img_param.colour_trc;
 
+  const int bits = dt_module_param_int(module, dt_module_get_param(module->so, dt_token("bits")))[0];
+  const float target_intensity = dt_module_param_float(module, dt_module_get_param(module->so, dt_token("target i")))[0];
+
   char filename[512];
   snprintf(filename, sizeof(filename), "%s.jxl", basename);
 
@@ -97,14 +100,37 @@ void write_sink(
   JxlEncoderInitBasicInfo(&basic_info);
   basic_info.xsize = width;
   basic_info.ysize = height;
-  basic_info.bits_per_sample = 16;
-  basic_info.exponent_bits_per_sample = 5;
-
+  switch(bits)
+  {
+    case 0: /* f16 */ basic_info.bits_per_sample = 16;
+                      basic_info.exponent_bits_per_sample = 5;
+                      break;
+    case 1: /* u16 */ basic_info.bits_per_sample = 16;
+                      basic_info.exponent_bits_per_sample = 0;
+                      break;
+    case 2: /* u12 */ basic_info.bits_per_sample = 12;
+                      basic_info.exponent_bits_per_sample = 0;
+                      break;
+    case 3: /* u10 */ basic_info.bits_per_sample = 10;
+                      basic_info.exponent_bits_per_sample = 0;
+                      break;
+    case 4: /* u8 */  basic_info.bits_per_sample = 8;
+                      basic_info.exponent_bits_per_sample = 0;
+                      break;
+    default:          snprintf(module->graph->gui_msg_buf,
+                               sizeof(module->graph->gui_msg_buf),
+                               "[o-jxl] Recieved invalid bits value! Aborting…");
+                      module->graph->gui_msg = module->graph->gui_msg_buf;
+                      {
+                        error = 1;
+                        goto end;
+                      }
+  }
 
   // Container isn’t necessary but has minimal overhead, and is needed for EXIF data.
   // exiftool can add it later, but it issues a minor error.
   if(JxlAssert(JxlEncoderUseContainer(encoder,
-                                   JXL_TRUE),
+                                      JXL_TRUE),
                encoder,
                __LINE__))
   {
@@ -148,27 +174,6 @@ void write_sink(
     }
   }
 
-  // Codestream level should be chosen automatically given the settings
-  if(JxlAssert(JxlEncoderSetBasicInfo(encoder,
-                                      &basic_info),
-               encoder,
-               __LINE__))
-  {
-    error = 1;
-    goto end;
-  }
-
-  const int effort = dt_module_param_int(module, dt_module_get_param(module->so, dt_token("effort")))[0];
-  if(JxlAssert(JxlEncoderFrameSettingsSetOption(frame_settings,
-                                                JXL_ENC_FRAME_SETTING_EFFORT,
-                                                effort),
-               encoder,
-               __LINE__))
-  {
-    error = 1;
-    goto end;
-  }
-
 
 
   // Only currently support the options shown in the export GUI, except ‘custom’ as I don’t know where the custom values come from,
@@ -197,7 +202,7 @@ void write_sink(
                                     colour_encoding.primaries_green_xy[0] = 0.21;
                                     colour_encoding.primaries_green_xy[1] = 0.71;
                                     colour_encoding.primaries_blue_xy[0] = 0.15;
-                                      colour_encoding.primaries_blue_xy[1] = 0.06;
+                                    colour_encoding.primaries_blue_xy[1] = 0.06;
                                     colour_encoding.white_point = JXL_WHITE_POINT_D65;
                                     break;
                                     // Values from §8.1 of ITU-T H.273 (V4) (07/2024). Because I wasn’t sure!
@@ -224,22 +229,22 @@ void write_sink(
   }
   colour_encoding.primaries = nativePrimaries;
 
-  JxlTransferFunction nativeTRC = 0;
   switch(trc)
   {
-    case s_colour_trc_linear:       nativeTRC = JXL_TRANSFER_FUNCTION_LINEAR;
+    case s_colour_trc_linear:       colour_encoding.transfer_function = JXL_TRANSFER_FUNCTION_LINEAR;
                                     break;
-    case s_colour_trc_709:          nativeTRC = JXL_TRANSFER_FUNCTION_709;
+    case s_colour_trc_709:          colour_encoding.transfer_function = JXL_TRANSFER_FUNCTION_709;
                                     break;
-    case s_colour_trc_srgb:         nativeTRC = JXL_TRANSFER_FUNCTION_SRGB;
+    case s_colour_trc_srgb:         colour_encoding.transfer_function = JXL_TRANSFER_FUNCTION_SRGB;
                                     break;
-    case s_colour_trc_PQ:           nativeTRC = JXL_TRANSFER_FUNCTION_PQ;
+    case s_colour_trc_PQ:           colour_encoding.transfer_function = JXL_TRANSFER_FUNCTION_PQ;
                                     break;
-    case s_colour_trc_DCI:          nativeTRC = JXL_TRANSFER_FUNCTION_DCI;
+    case s_colour_trc_DCI:          colour_encoding.transfer_function = JXL_TRANSFER_FUNCTION_DCI;
                                     break;
-    case s_colour_trc_HLG:          nativeTRC = JXL_TRANSFER_FUNCTION_HLG;
+    case s_colour_trc_HLG:          colour_encoding.transfer_function = JXL_TRANSFER_FUNCTION_HLG;
+                                    basic_info.intensity_target = target_intensity;
                                     break;
-    case s_colour_trc_gamma:        nativeTRC = JXL_TRANSFER_FUNCTION_GAMMA;
+    case s_colour_trc_gamma:        colour_encoding.transfer_function = JXL_TRANSFER_FUNCTION_GAMMA;
                                     // Then set whatever gamma value. But using ~2.2 because s_colour_trc_gamma is currently only for AdobeRGB(?)
                                     // Derived from §4.3.1.2 of [Adobe® RGB (1998) Color Image Encoding]
                                     // (https://www.adobe.com/digitalimag/pdfs/AdobeRGB1998.pdf).
@@ -248,7 +253,7 @@ void write_sink(
                                     colour_encoding.gamma = 1.0 / 2.2;
                                     break;
                                     // Not sure if this is what I should do?
-    case s_colour_trc_unknown:      nativeTRC = JXL_TRANSFER_FUNCTION_UNKNOWN;
+    case s_colour_trc_unknown:      colour_encoding.transfer_function = JXL_TRANSFER_FUNCTION_UNKNOWN;
                                     break;
     default:                        snprintf(module->graph->gui_msg_buf,
                                              sizeof(module->graph->gui_msg_buf),
@@ -259,13 +264,24 @@ void write_sink(
                                       goto end;
                                     }
   }
-  colour_encoding.transfer_function = nativeTRC;
 
-  // Hardcoding as relative for now.
-  // ISO 15076-1:2010, but don’t currently know what they really do and I can’t find any reference to them within vkdt.
+  // ISO 15076-1:2010
+  // Hardcoding as perceptual as I don’t know what they really do, but that’s what the `src/pipe/icc-profiles.h` use.
   // (They are user selectable in darktable but might not be important enough to warrant that?).
-  colour_encoding.rendering_intent = JXL_RENDERING_INTENT_RELATIVE;
-  
+  colour_encoding.rendering_intent = JXL_RENDERING_INTENT_PERCEPTUAL;
+
+
+
+  // Codestream level should be chosen automatically given the settings
+  if(JxlAssert(JxlEncoderSetBasicInfo(encoder,
+                                      &basic_info),
+               encoder,
+               __LINE__))
+  {
+    error = 1;
+    goto end;
+  }
+
   if(JxlAssert(JxlEncoderSetColorEncoding(encoder,
                                           &colour_encoding),
                encoder,
@@ -274,6 +290,18 @@ void write_sink(
     error = 1;
     goto end;
   }
+
+  const int effort = dt_module_param_int(module, dt_module_get_param(module->so, dt_token("effort")))[0];
+  if(JxlAssert(JxlEncoderFrameSettingsSetOption(frame_settings,
+                                                JXL_ENC_FRAME_SETTING_EFFORT,
+                                                effort),
+               encoder,
+               __LINE__))
+  {
+    error = 1;
+    goto end;
+  }
+
 
 
   // Pretty much straight from darktable. Don’t really understand what’s going on.

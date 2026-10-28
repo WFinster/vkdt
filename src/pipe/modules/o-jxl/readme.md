@@ -11,4 +11,6 @@ supports writing still RGB jxl images to disk. currently only supports sRGB, rec
 * `filename` the filename on disk to write to. `.jxl` will be appended.
 * `quality` 0-100 where 100 sets lossless encoding (of the f16 input values). other values intended to roughly match libjpeg-turbo quality.
 * `effort` 1-10 (default = 7) where higher values allow more computation. for lossless this generally means smaller file sizes. for lossy this means better visual quality at a given filesize, but also greater conformance to the specified quality. importantly this can sometimes mean larger (but higher quality) images than at lower effort levels.
+* `bits` for lossless this will convert the f16 input to the specified bit depth (if not kept at original). for lossy this just signals to the decoder what bit depth to output.
+* `target i` intensity target. user values only applied to HLG images at the moment. not a max content luminance value.
 * `exif` whether to write exif data copied from the original imput image
